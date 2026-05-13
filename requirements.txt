@@ -8,3 +8,4 @@ scikit-learn
 shap
 groq
 joblib
+statsmodels
