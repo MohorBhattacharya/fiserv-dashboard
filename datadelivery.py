@@ -532,7 +532,8 @@ Answer clearly and conversationally. Reference specific numbers. Under 150 words
 
         try:
             from groq import Groq
-            client = Groq(api_key="gsk_live_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+            import os
+            client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
