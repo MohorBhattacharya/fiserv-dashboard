@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+import os
 
 st.set_page_config(
     page_title="Fiserv Effort Estimation — AI Dashboard",
@@ -34,6 +35,16 @@ page = st.sidebar.radio("", ["📊 Dashboard", "🤖 Copilot Assistant"])
 
 color_map = {"Defect": "#D85A30", "Enhancement": "#BA7517", "Feature": "#2E75B6"}
 
+# Encodings and mappings used across both pages
+type_enc = {"Feature": 0, "Enhancement": 1, "Defect": 2}
+plat_enc = {"iOS": 0, "Android": 1, "Platform": 2}
+size_enc = {"S": 1, "M": 2, "L": 3}
+release_sprint = {
+    "REL-X2": 5,  "REL-X3": 10, "REL-X4": 15,
+    "REL-X5": 20, "REL-X6": 25, "REL-X7": 30,
+    "REL-X8": 35, "REL-X9": 40, "Future Release": 55
+}
+
 # ═════════════════════════════════════════════════════════════
 # PAGE 1 — DASHBOARD
 # ═════════════════════════════════════════════════════════════
@@ -57,10 +68,10 @@ if page == "📊 Dashboard":
     itypes     = ["All"] + sorted(df["Item_Type"].unique().tolist())
     team_sizes = ["All"] + sorted(df["Team_Size"].dropna().unique().astype(int).tolist())
 
-    sel_release   = st.sidebar.selectbox("Release",   releases)
-    sel_platform  = st.sidebar.selectbox("Platform",  platforms)
-    sel_itype     = st.sidebar.selectbox("Item Type", itypes)
-    sel_teamsize  = st.sidebar.selectbox(
+    sel_release  = st.sidebar.selectbox("Release",   releases)
+    sel_platform = st.sidebar.selectbox("Platform",  platforms)
+    sel_itype    = st.sidebar.selectbox("Item Type", itypes)
+    sel_teamsize = st.sidebar.selectbox(
         "Team Size",
         team_sizes,
         help="Filter by team size to see how effort and overrun vary across different sized teams."
@@ -99,12 +110,13 @@ if page == "📊 Dashboard":
     st.divider()
 
     # ── TABS ──────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📉 Overrun Analysis",
         "📊 Release Overrun",
         "⏱️ Effort Patterns",
         "🔗 What Predicts Hours?",
-        "📋 Raw Data"
+        "📋 Raw Data",
+        "🚨 Spillover Risk"
     ])
 
     # ── TAB 1: Overrun Analysis ────────────────────────────────
@@ -183,9 +195,10 @@ if page == "📊 Dashboard":
             fig4.update_layout(showlegend=False, height=360)
             st.plotly_chart(fig4, use_container_width=True)
 
-        col5, col6 = st.columns(2)
-        with col5:
-            st.markdown("#### Breakdown by Work Type")
+        # Pie chart — full width on its own row (box plot removed)
+        st.markdown("#### Breakdown by Work Type")
+        pie_col, _ = st.columns([1, 1])
+        with pie_col:
             type_counts = filtered["Item_Type"].value_counts().reset_index()
             type_counts.columns = ["Item Type", "Count"]
             fig9 = px.pie(type_counts, names="Item Type", values="Count",
@@ -194,15 +207,6 @@ if page == "📊 Dashboard":
                           hole=0.4)
             fig9.update_layout(height=340)
             st.plotly_chart(fig9, use_container_width=True)
-
-        with col6:
-            st.markdown("#### Actual Hours by Team Size")
-            st.markdown("*Distribution of actual hours worked, broken down by team size.*")
-            fig_ts = px.box(filtered, x="Team_Size", y="Actual_Hrs",
-                            color_discrete_sequence=["#2E75B6"],
-                            labels={"Team_Size": "Team Size (people)", "Actual_Hrs": "Actual Hours"})
-            fig_ts.update_layout(height=340)
-            st.plotly_chart(fig_ts, use_container_width=True)
 
     # ── TAB 2: Release Overrun ─────────────────────────────────
     with tab2:
@@ -299,7 +303,6 @@ if page == "📊 Dashboard":
                                       "Actual_Hrs": "Actual Hours Taken",
                                       "Item_Type": "Work Type"},
                               render_mode="svg")
-            # Manual trendline using numpy — no statsmodels needed
             x = filtered["Story_Points"].values
             y = filtered["Actual_Hrs"].values
             mask = ~np.isnan(x) & ~np.isnan(y)
@@ -378,6 +381,175 @@ if page == "📊 Dashboard":
         )
         st.caption(f"Showing {len(filtered)} stories  |  Built by Mohor — University of Auckland Industry Placement | Fiserv Professional Services | 2026")
 
+    # ── TAB 6: Spillover Risk ──────────────────────────────────
+    with tab6:
+        st.markdown("### 🚨 Will This Change Request Cause Spillover?")
+        st.markdown("""
+        Enter the sprint capacity details and the change request size below.
+        The model predicts whether adding this work **mid-sprint** will push the team into overrun.
+        """)
+
+        # ── Load models inside this tab (same cache as Copilot page) ──
+        @st.cache_resource(ttl=0)
+        def load_models():
+            import joblib, pickle, shap
+            xgb      = joblib.load("xgb_model.pkl")
+            knn      = joblib.load("knn_model.pkl")
+            ql       = joblib.load("qr_low.pkl")
+            qm       = joblib.load("qr_mid.pkl")
+            qh       = joblib.load("qr_high.pkl")
+            shap_exp = joblib.load("shap_explainer.pkl")
+            train_df = pd.read_csv("train_data.csv")
+            with open("features.pkl", "rb") as f:
+                feats = pickle.load(f)
+            return xgb, knn, ql, qm, qh, shap_exp, train_df, feats
+
+        xgb_m, knn_m, ql_m, qm_m, qh_m, shap_exp, train_df, FEATS = load_models()
+
+        st.divider()
+        col_s1, col_s2 = st.columns(2)
+
+        with col_s1:
+            st.markdown("#### Sprint Capacity")
+            sp_team_size   = st.selectbox("Team Size (people)", [3, 8, 10], key="sp_ts")
+            sp_hrs_per_day = st.number_input(
+                "Working hrs per person per day",
+                min_value=4.0, max_value=10.0, value=7.0, step=0.5,
+                help="Typical = 6–8 hrs. Accounts for meetings, reviews etc."
+            )
+            sp_days = st.number_input(
+                "Sprint length (days)",
+                min_value=5, max_value=30, value=14, step=1
+            )
+            total_capacity = sp_team_size * sp_hrs_per_day * sp_days
+            st.metric("Total Sprint Capacity", f"{total_capacity:.0f} hrs",
+                      help="Team Size × Hours/Day × Sprint Days")
+
+        with col_s2:
+            st.markdown("#### Current Sprint State")
+            is_mid_sprint = st.checkbox("⚡ This is a MID-SPRINT change request", value=True)
+            pct_complete  = st.slider(
+                "Sprint % complete", 0, 100, 50,
+                help="How far through the sprint is the team right now?",
+                disabled=not is_mid_sprint
+            )
+            already_committed = st.number_input(
+                "Hours already committed / in-progress",
+                min_value=0.0, max_value=5000.0, value=0.0, step=10.0,
+                help="Work already assigned or in-progress this sprint."
+            )
+
+            if is_mid_sprint:
+                remaining_capacity = total_capacity * (1 - pct_complete / 100) - already_committed
+                st.metric(
+                    "Remaining Capacity",
+                    f"{max(remaining_capacity, 0):.0f} hrs",
+                    delta=f"{pct_complete}% of sprint elapsed",
+                    delta_color="inverse"
+                )
+            else:
+                remaining_capacity = total_capacity - already_committed
+                st.metric("Available Capacity", f"{max(remaining_capacity, 0):.0f} hrs")
+
+        st.divider()
+        st.markdown("#### Change Request Details")
+        cr_col1, cr_col2, cr_col3 = st.columns(3)
+
+        with cr_col1:
+            cr_story_pts = st.selectbox("Story Points", [1, 2, 3, 5, 8, 13, 21], index=2, key="cr_sp")
+            cr_orig_est  = st.number_input(
+                "Original Estimate (hrs)",
+                min_value=1.0, max_value=300.0, value=40.0, step=1.0, key="cr_oe"
+            )
+        with cr_col2:
+            cr_item_type = st.selectbox("Item Type", ["Feature", "Enhancement", "Defect"], key="cr_it")
+            cr_platform  = st.selectbox("Platform", ["iOS", "Android", "Platform"], key="cr_pl")
+        with cr_col3:
+            cr_feat_size = st.selectbox("Feature Size", ["S", "M", "L"], key="cr_fs")
+            cr_has_qa    = st.selectbox("Has QA?", ["Yes", "No"], key="cr_qa")
+
+        cr_sprint_num = release_sprint.get(sel_release, 30) if sel_release != "All" else 30
+
+        cr_input = pd.DataFrame([{
+            "Story_Points":     cr_story_pts,
+            "Original_Est_Hrs": cr_orig_est,
+            "Bug_Rework_Hrs":   0.0,
+            "N_Tasks":          4,
+            "Item_Type_enc":    type_enc[cr_item_type],
+            "Feature_Size_enc": size_enc[cr_feat_size],
+            "Platform_enc":     plat_enc[cr_platform],
+            "Has_QA_enc":       1 if cr_has_qa == "Yes" else 0,
+            "Team_Type_enc":    1,
+            "Team_Size":        sp_team_size,
+            "Sprint_Number":    cr_sprint_num,
+        }])[FEATS]
+
+        cr_xgb  = xgb_m.predict(cr_input)[0]
+        cr_low  = ql_m.predict(cr_input)[0]
+        cr_high = qh_m.predict(cr_input)[0]
+
+        st.divider()
+        st.markdown("#### 🔎 Spillover Verdict")
+
+        avail       = max(remaining_capacity, 0)
+        headroom    = avail - cr_xgb
+        headroom_lo = avail - cr_low
+        headroom_hi = avail - cr_high
+
+        if headroom > 0 and headroom_lo > 0:
+            risk_level = "🟢 LOW RISK — Fits comfortably within remaining capacity"
+            risk_color = "#1D9E75"
+        elif headroom > 0 and headroom_lo <= 0:
+            risk_level = "🟡 MEDIUM RISK — Fits on central estimate, tight on optimistic scenario"
+            risk_color = "#FFDD57"
+        elif headroom <= 0 and headroom_hi < 0:
+            risk_level = "🔴 HIGH RISK — Spillover certain across all scenarios"
+            risk_color = "#D85A30"
+        else:
+            risk_level = "🟠 MEDIUM-HIGH RISK — May fit but high scenario causes spillover"
+            risk_color = "#E8882A"
+
+        st.markdown(f"""
+        <div style="background:{risk_color}22; border-left: 5px solid {risk_color};
+                    padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+            <h3 style="color:{risk_color}; margin:0;">{risk_level}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+
+        v1, v2, v3, v4 = st.columns(4)
+        v1.metric("Available Capacity",    f"{avail:.0f} hrs")
+        v2.metric("Predicted Hours (XGB)", f"{cr_xgb:.0f} hrs")
+        v3.metric("Headroom (Central)",
+                  f"{headroom:+.0f} hrs",
+                  delta_color="normal" if headroom >= 0 else "inverse")
+        v4.metric("Worst-Case Headroom",
+                  f"{headroom_hi:+.0f} hrs",
+                  delta_color="normal" if headroom_hi >= 0 else "inverse")
+
+        bar_data = pd.DataFrame({
+            "Scenario": ["Available Capacity", "Low Estimate", "Central Estimate", "High Estimate"],
+            "Hours":    [avail, cr_low, cr_xgb, cr_high],
+        })
+        fig_sp = px.bar(
+            bar_data, x="Scenario", y="Hours",
+            color="Scenario",
+            color_discrete_map={
+                "Available Capacity": "#2E75B6",
+                "Low Estimate":       "#1D9E75",
+                "Central Estimate":   "#FFDD57",
+                "High Estimate":      "#D85A30"
+            },
+            text="Hours"
+        )
+        fig_sp.update_traces(texttemplate="%{text:.0f} hrs", textposition="outside")
+        fig_sp.add_hline(y=avail, line_dash="dash", line_color="white",
+                         annotation_text="Capacity ceiling", annotation_position="top right")
+        fig_sp.update_layout(height=400, showlegend=False,
+                             yaxis_title="Hours", xaxis_title="")
+        st.plotly_chart(fig_sp, use_container_width=True)
+
+        st.info("💡 **Tip:** If risk is Medium or High, switch to the 🤖 Copilot Assistant and ask — 'Should we defer this to next sprint?' or 'What's the risk of taking this on mid-sprint?'")
+
 
 # ═════════════════════════════════════════════════════════════
 # PAGE 2 — COPILOT ASSISTANT
@@ -394,8 +566,7 @@ elif page == "🤖 Copilot Assistant":
 
     @st.cache_resource(ttl=0)
     def load_models():
-        import joblib
-        import pickle
+        import joblib, pickle, shap
         xgb      = joblib.load("xgb_model.pkl")
         knn      = joblib.load("knn_model.pkl")
         ql       = joblib.load("qr_low.pkl")
@@ -437,14 +608,35 @@ elif page == "🤖 Copilot Assistant":
         has_qa       = st.selectbox("Has QA Task?", ["Yes", "No"],
                         help="Does this story require quality assurance testing?")
 
-    type_enc = {"Feature": 0, "Enhancement": 1, "Defect": 2}
-    plat_enc = {"iOS": 0, "Android": 1, "Platform": 2}
-    size_enc = {"S": 1, "M": 2, "L": 3}
-    release_sprint = {
-        "REL-X2": 5,  "REL-X3": 10, "REL-X4": 15,
-        "REL-X5": 20, "REL-X6": 25, "REL-X7": 30,
-        "REL-X8": 35, "REL-X9": 40, "Future Release": 55
-    }
+    # ── Mid-Sprint Context ─────────────────────────────────────
+    st.divider()
+    st.subheader("Step 1b — Mid-Sprint Context (optional)")
+    st.markdown("*Fill this in if the customer is requesting a change while a sprint is already in progress.*")
+
+    mid_col1, mid_col2, mid_col3 = st.columns(3)
+    with mid_col1:
+        mid_sprint_cr = st.checkbox("⚡ This is a mid-sprint change request", value=False)
+        mid_pct       = st.slider(
+            "Sprint % complete", 0, 100, 50,
+            disabled=not mid_sprint_cr, key="cop_mid",
+            help="How far through the current sprint is the team?"
+        )
+    with mid_col2:
+        mid_committed = st.number_input(
+            "Hours already committed this sprint",
+            min_value=0.0, value=0.0, step=5.0,
+            disabled=not mid_sprint_cr, key="cop_comm",
+            help="Hours already in-progress or assigned this sprint."
+        )
+    with mid_col3:
+        default_cap = float(team_size * 7 * 14)
+        mid_capacity = st.number_input(
+            "Total sprint capacity (hrs)",
+            min_value=10.0, value=default_cap, step=10.0,
+            disabled=not mid_sprint_cr, key="cop_cap",
+            help="Team Size × hrs/day × sprint days. Auto-filled as 7 hrs/day × 14 days."
+        )
+
     sprint_num = release_sprint.get(release_sel, 55)
 
     input_data = {
@@ -468,6 +660,19 @@ elif page == "🤖 Copilot Assistant":
     mid_pred  = qm_m.predict(X_input)[0]
     high_pred = qh_m.predict(X_input)[0]
 
+    # ── Mid-sprint capacity verdict ────────────────────────────
+    if mid_sprint_cr:
+        mid_remaining = mid_capacity * (1 - mid_pct / 100) - mid_committed
+        mid_fits      = mid_remaining >= xgb_pred
+        mid_headroom  = mid_remaining - xgb_pred
+        verdict_label = "✅ FITS in remaining capacity" if mid_fits else "🚨 SPILLOVER RISK"
+        st.metric(
+            "Remaining Sprint Capacity",
+            f"{max(mid_remaining, 0):.0f} hrs",
+            delta=f"{verdict_label}  |  Headroom: {mid_headroom:+.0f} hrs",
+            delta_color="normal" if mid_fits else "inverse"
+        )
+
     st.divider()
     st.subheader("Step 2 — See the instant prediction")
     st.markdown("*Updates automatically as you change the work item details above.*")
@@ -481,7 +686,7 @@ elif page == "🤖 Copilot Assistant":
     st.subheader("Step 3 — Ask the Copilot Assistant")
     st.markdown("*Ask any planning question. The assistant uses historical data from all past releases to answer.*")
 
-    import shap
+    import shap as shap_lib
     sv    = shap_exp(X_input).values[0]
     pairs = sorted(zip(FEATS, sv), key=lambda x: abs(x[1]), reverse=True)
     top3  = pairs[:3]
@@ -502,6 +707,22 @@ elif page == "🤖 Copilot Assistant":
                         f"Est: {past['Original_Est_Hrs']:.0f} hrs | "
                         f"Actual: {past['Actual_Hrs']:.0f} hrs | "
                         f"Overrun: {overrun:+.0f}%")
+
+    # Build mid-sprint section for the system prompt
+    mid_sprint_context = ""
+    if mid_sprint_cr:
+        mid_remaining = mid_capacity * (1 - mid_pct / 100) - mid_committed
+        fits          = mid_remaining >= xgb_pred
+        mid_sprint_context = f"""
+MID-SPRINT CONTEXT:
+  Sprint is {mid_pct}% complete.
+  Total sprint capacity: {mid_capacity:.0f} hrs
+  Hours already committed: {mid_committed:.0f} hrs
+  Remaining capacity: {max(mid_remaining, 0):.0f} hrs
+  XGBoost predicts this item needs: {xgb_pred:.1f} hrs
+  Verdict: {"FITS within remaining capacity." if fits else "SPILLOVER RISK — predicted hours exceed remaining capacity."}
+  Headroom: {mid_remaining - xgb_pred:+.0f} hrs
+"""
 
     system_prompt = f"""You are a helpful AI planning assistant for Fiserv project managers.
 You help estimate effort for software work items using machine learning predictions
@@ -525,7 +746,7 @@ KEY DRIVERS:
 
 3 MOST SIMILAR PAST STORIES:
 {analogy_txt}
-
+{mid_sprint_context}
 Answer clearly and conversationally. Reference specific numbers. Under 150 words."""
 
     if "messages" not in st.session_state:
@@ -535,7 +756,7 @@ Answer clearly and conversationally. Reference specific numbers. Under 150 words
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if prompt_input := st.chat_input("e.g. How long will this take? Should I be worried about overruns?"):
+    if prompt_input := st.chat_input("e.g. Should we take this on mid-sprint? Will it cause spillover?"):
 
         st.session_state.messages.append({"role": "user", "content": prompt_input})
         with st.chat_message("user"):
@@ -543,7 +764,6 @@ Answer clearly and conversationally. Reference specific numbers. Under 150 words
 
         try:
             from groq import Groq
-            import os
             client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
