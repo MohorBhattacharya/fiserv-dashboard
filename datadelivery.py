@@ -764,7 +764,7 @@ Answer clearly and conversationally. Reference specific numbers. Under 150 words
 
         try:
             from groq import Groq
-            client = Groq(api_key=os.environ.get("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"))
+            client = Groq(api_key=st.secrets.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY"))
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
