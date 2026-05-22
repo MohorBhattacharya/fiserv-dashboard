@@ -432,9 +432,11 @@ if page == "📊 Dashboard":
 
         with cr_col1:
             cr_story_pts = st.selectbox("Story Points", [1, 2, 3, 5, 8, 13, 21], index=2, key="cr_sp")
-            cr_orig_est  = st.number_input("Original Estimate (hrs)",
-                                            min_value=1.0, max_value=300.0,
-                                            value=40.0, step=1.0, key="cr_oe")
+            sp_to_est = {1: 8, 2: 16, 3: 24, 5: 40, 8: 64, 13: 104, 21: 168}
+            cr_orig_est = st.number_input("Original Estimate (hrs)",
+                               min_value=1.0, max_value=300.0,
+                               value=float(sp_to_est[cr_story_pts]),
+                               step=1.0, key="cr_oe")
         with cr_col2:
             cr_item_type = st.selectbox("Item Type", ["Feature", "Enhancement", "Defect"], key="cr_it")
             cr_platform  = st.selectbox("Platform", ["iOS", "Android", "Platform"], key="cr_pl")
