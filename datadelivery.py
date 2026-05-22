@@ -431,7 +431,8 @@ if page == "📊 Dashboard":
         cr_col1, cr_col2, cr_col3 = st.columns(3)
 
         with cr_col1:
-            cr_story_pts = st.slider("Story Points", 1, 21, 5, key="cr_sp")            sp_to_est = {1: 8, 2: 16, 3: 24, 5: 40, 8: 64, 13: 104, 21: 168}
+            cr_story_pts = st.slider("Story Points", 1, 21, 5, key="cr_sp")
+            sp_to_est = {1: 8, 2: 16, 3: 24, 5: 40, 8: 64, 13: 104, 21: 168}
             cr_orig_est = st.number_input("Original Estimate (hrs)",
                                min_value=1.0, max_value=300.0,
                                value=float(sp_to_est[cr_story_pts]),
