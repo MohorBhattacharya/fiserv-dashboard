@@ -432,10 +432,9 @@ if page == "📊 Dashboard":
 
         with cr_col1:
             cr_story_pts = st.slider("Story Points", 1, 21, 5, key="cr_sp")
-            sp_to_est = {1: 8, 2: 16, 3: 24, 5: 40, 8: 64, 13: 104, 21: 168}
             cr_orig_est = st.number_input("Original Estimate (hrs)",
                                min_value=1.0, max_value=300.0,
-                               value=float(sp_to_est[cr_story_pts]),
+                               value=float(cr_story_pts * 8),
                                step=1.0, key="cr_oe")
         with cr_col2:
             cr_item_type = st.selectbox("Item Type", ["Feature", "Enhancement", "Defect"], key="cr_it")
