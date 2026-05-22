@@ -389,67 +389,35 @@ if page == "📊 Dashboard":
         The model predicts whether adding this work **mid-sprint** will push the team into overrun.
         """)
 
-        # ── Load models inside this tab (same cache as Copilot page) ──
-        @st.cache_resource(ttl=0)
-        def load_models():
-            import joblib, pickle, shap
-            xgb      = joblib.load("xgb_model.pkl")
-            knn      = joblib.load("knn_model.pkl")
-            ql       = joblib.load("qr_low.pkl")
-            qm       = joblib.load("qr_mid.pkl")
-            qh       = joblib.load("qr_high.pkl")
-            shap_exp = joblib.load("shap_explainer.pkl")
-            train_df = pd.read_csv("train_data.csv")
-            with open("features.pkl", "rb") as f:
-                feats = pickle.load(f)
-            return xgb, knn, ql, qm, qh, shap_exp, train_df, feats
-
-        xgb_m, knn_m, ql_m, qm_m, qh_m, shap_exp, train_df, FEATS = load_models()
-
         st.divider()
         col_s1, col_s2 = st.columns(2)
 
         with col_s1:
             st.markdown("#### Sprint Capacity")
             sp_team_size   = st.selectbox("Team Size (people)", [3, 8, 10], key="sp_ts")
-            sp_hrs_per_day = st.number_input(
-                "Working hrs per person per day",
-                min_value=4.0, max_value=10.0, value=7.0, step=0.5,
-                help="Typical = 6–8 hrs. Accounts for meetings, reviews etc."
-            )
-            sp_days = st.number_input(
-                "Sprint length (days)",
-                min_value=5, max_value=30, value=14, step=1
-            )
+            sp_hrs_per_day = st.number_input("Working hrs per person per day",
+                                              min_value=4.0, max_value=10.0, value=7.0, step=0.5,
+                                              help="Typical = 6–8 hrs.")
+            sp_days        = st.number_input("Sprint length (days)",
+                                              min_value=5, max_value=30, value=14, step=1)
             total_capacity = sp_team_size * sp_hrs_per_day * sp_days
-            st.metric("Total Sprint Capacity", f"{total_capacity:.0f} hrs",
-                      help="Team Size × Hours/Day × Sprint Days")
+            st.metric("Total Sprint Capacity", f"{total_capacity:.0f} hrs")
 
         with col_s2:
             st.markdown("#### Current Sprint State")
-            is_mid_sprint = st.checkbox("⚡ This is a MID-SPRINT change request", value=True)
-            pct_complete  = st.slider(
-                "Sprint % complete", 0, 100, 50,
-                help="How far through the sprint is the team right now?",
-                disabled=not is_mid_sprint
-            )
-            already_committed = st.number_input(
-                "Hours already committed / in-progress",
-                min_value=0.0, max_value=5000.0, value=0.0, step=10.0,
-                help="Work already assigned or in-progress this sprint."
-            )
-
+            is_mid_sprint     = st.checkbox("⚡ This is a MID-SPRINT change request", value=True)
+            pct_complete      = st.slider("Sprint % complete", 0, 100, 50,
+                                          disabled=not is_mid_sprint)
+            already_committed = st.number_input("Hours already committed / in-progress",
+                                                 min_value=0.0, max_value=5000.0,
+                                                 value=0.0, step=10.0)
             if is_mid_sprint:
                 remaining_capacity = total_capacity * (1 - pct_complete / 100) - already_committed
-                st.metric(
-                    "Remaining Capacity",
-                    f"{max(remaining_capacity, 0):.0f} hrs",
-                    delta=f"{pct_complete}% of sprint elapsed",
-                    delta_color="inverse"
-                )
             else:
                 remaining_capacity = total_capacity - already_committed
-                st.metric("Available Capacity", f"{max(remaining_capacity, 0):.0f} hrs")
+
+            remaining_capacity = max(remaining_capacity, 0)
+            st.metric("Remaining Capacity", f"{remaining_capacity:.0f} hrs")
 
         st.divider()
         st.markdown("#### Change Request Details")
@@ -457,10 +425,9 @@ if page == "📊 Dashboard":
 
         with cr_col1:
             cr_story_pts = st.selectbox("Story Points", [1, 2, 3, 5, 8, 13, 21], index=2, key="cr_sp")
-            cr_orig_est  = st.number_input(
-                "Original Estimate (hrs)",
-                min_value=1.0, max_value=300.0, value=40.0, step=1.0, key="cr_oe"
-            )
+            cr_orig_est  = st.number_input("Original Estimate (hrs)",
+                                            min_value=1.0, max_value=300.0,
+                                            value=40.0, step=1.0, key="cr_oe")
         with cr_col2:
             cr_item_type = st.selectbox("Item Type", ["Feature", "Enhancement", "Defect"], key="cr_it")
             cr_platform  = st.selectbox("Platform", ["iOS", "Android", "Platform"], key="cr_pl")
@@ -484,30 +451,41 @@ if page == "📊 Dashboard":
             "Sprint_Number":    cr_sprint_num,
         }])[FEATS]
 
-        cr_xgb  = xgb_m.predict(cr_input)[0]
-        cr_low  = ql_m.predict(cr_input)[0]
-        cr_high = qh_m.predict(cr_input)[0]
+        cr_xgb  = float(xgb_m.predict(cr_input)[0])
+        cr_low  = float(ql_m.predict(cr_input)[0])
+        cr_mid  = float(qm_m.predict(cr_input)[0])
+        cr_high = float(qh_m.predict(cr_input)[0])
+
+        st.divider()
+        st.markdown("#### Model Predictions for This Change Request")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Low Estimate",      f"{cr_low:.0f} hrs",  help="Optimistic scenario")
+        m2.metric("Central Estimate",  f"{cr_mid:.0f} hrs",  help="Most likely")
+        m3.metric("High Estimate",     f"{cr_high:.0f} hrs", help="Worst case")
+        m4.metric("XGBoost Predicted", f"{cr_xgb:.0f} hrs",  help="Best single estimate")
 
         st.divider()
         st.markdown("#### 🔎 Spillover Verdict")
 
-        avail       = max(remaining_capacity, 0)
-        headroom    = avail - cr_xgb
-        headroom_lo = avail - cr_low
-        headroom_hi = avail - cr_high
+        headroom    = remaining_capacity - cr_xgb
+        headroom_lo = remaining_capacity - cr_low
+        headroom_hi = remaining_capacity - cr_high
 
-        if headroom > 0 and headroom_lo > 0:
+        if remaining_capacity == 0:
+            risk_level = "🔴 HIGH RISK — No capacity remaining"
+            risk_color = "#D85A30"
+        elif headroom > 0 and headroom_lo > 0 and headroom_hi > 0:
             risk_level = "🟢 LOW RISK — Fits comfortably within remaining capacity"
             risk_color = "#1D9E75"
-        elif headroom > 0 and headroom_lo <= 0:
-            risk_level = "🟡 MEDIUM RISK — Fits on central estimate, tight on optimistic scenario"
+        elif headroom > 0 and headroom_hi > 0:
+            risk_level = "🟡 MEDIUM RISK — Fits on central estimate, high scenario is tight"
             risk_color = "#FFDD57"
-        elif headroom <= 0 and headroom_hi < 0:
+        elif headroom > 0 and headroom_hi <= 0:
+            risk_level = "🟠 MEDIUM-HIGH RISK — Central fits but worst case causes spillover"
+            risk_color = "#E8882A"
+        else:
             risk_level = "🔴 HIGH RISK — Spillover certain across all scenarios"
             risk_color = "#D85A30"
-        else:
-            risk_level = "🟠 MEDIUM-HIGH RISK — May fit but high scenario causes spillover"
-            risk_color = "#E8882A"
 
         st.markdown(f"""
         <div style="background:{risk_color}22; border-left: 5px solid {risk_color};
@@ -517,39 +495,34 @@ if page == "📊 Dashboard":
         """, unsafe_allow_html=True)
 
         v1, v2, v3, v4 = st.columns(4)
-        v1.metric("Available Capacity",    f"{avail:.0f} hrs")
-        v2.metric("Predicted Hours (XGB)", f"{cr_xgb:.0f} hrs")
-        v3.metric("Headroom (Central)",
-                  f"{headroom:+.0f} hrs",
+        v1.metric("Remaining Capacity",    f"{remaining_capacity:.0f} hrs")
+        v2.metric("Predicted (XGBoost)",   f"{cr_xgb:.0f} hrs")
+        v3.metric("Headroom (Central)",    f"{headroom:+.0f} hrs",
                   delta_color="normal" if headroom >= 0 else "inverse")
-        v4.metric("Worst-Case Headroom",
-                  f"{headroom_hi:+.0f} hrs",
+        v4.metric("Worst-Case Headroom",   f"{headroom_hi:+.0f} hrs",
                   delta_color="normal" if headroom_hi >= 0 else "inverse")
 
         bar_data = pd.DataFrame({
-            "Scenario": ["Available Capacity", "Low Estimate", "Central Estimate", "High Estimate"],
-            "Hours":    [avail, cr_low, cr_xgb, cr_high],
+            "Scenario": ["Remaining Capacity", "Low Estimate", "Central Estimate", "High Estimate"],
+            "Hours":    [remaining_capacity, cr_low, cr_xgb, cr_high],
         })
-        fig_sp = px.bar(
-            bar_data, x="Scenario", y="Hours",
-            color="Scenario",
-            color_discrete_map={
-                "Available Capacity": "#2E75B6",
-                "Low Estimate":       "#1D9E75",
-                "Central Estimate":   "#FFDD57",
-                "High Estimate":      "#D85A30"
-            },
-            text="Hours"
-        )
+        fig_sp = px.bar(bar_data, x="Scenario", y="Hours",
+                        color="Scenario",
+                        color_discrete_map={
+                            "Remaining Capacity": "#2E75B6",
+                            "Low Estimate":       "#1D9E75",
+                            "Central Estimate":   "#FFDD57",
+                            "High Estimate":      "#D85A30"
+                        },
+                        text="Hours")
         fig_sp.update_traces(texttemplate="%{text:.0f} hrs", textposition="outside")
-        fig_sp.add_hline(y=avail, line_dash="dash", line_color="white",
+        fig_sp.add_hline(y=remaining_capacity, line_dash="dash", line_color="white",
                          annotation_text="Capacity ceiling", annotation_position="top right")
         fig_sp.update_layout(height=400, showlegend=False,
                              yaxis_title="Hours", xaxis_title="")
         st.plotly_chart(fig_sp, use_container_width=True)
 
-        st.info("💡 **Tip:** If risk is Medium or High, switch to the 🤖 Copilot Assistant and ask — 'Should we defer this to next sprint?' or 'What's the risk of taking this on mid-sprint?'")
-
+        st.info("💡 **Tip:** To see HIGH RISK — set Sprint % complete to 90%, add committed hours close to total capacity, then increase Story Points to 13 or 21.")
 
 # ═════════════════════════════════════════════════════════════
 # PAGE 2 — COPILOT ASSISTANT
