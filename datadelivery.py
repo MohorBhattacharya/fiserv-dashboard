@@ -10,7 +10,7 @@ st.set_page_config(
     layout="wide"
 )
 
-@st.cache_data
+@st.cache_data(ttl=0)
 def load_data():
     stories = pd.read_excel("Fiserv_Dataset.xlsx", sheet_name="User_Stories")
     tasks   = pd.read_excel("Fiserv_Dataset.xlsx", sheet_name="Tasks")
@@ -39,9 +39,10 @@ color_map = {"Defect": "#D85A30", "Enhancement": "#BA7517", "Feature": "#2E75B6"
 # ═════════════════════════════════════════════════════════════
 if page == "📊 Dashboard":
 
+    total_stories = len(df)
     st.title("📊 Fiserv Effort Estimation Dashboard")
-    st.markdown("""
-    > This dashboard analyses **435 completed User Stories** across 8 releases.
+    st.markdown(f"""
+    > This dashboard analyses **{total_stories} completed User Stories** across 8 releases.
     > Use the filters on the left to drill into specific releases, platforms, work types, or team sizes.
     > Every chart updates automatically when you change a filter.
     """)
@@ -155,12 +156,12 @@ if page == "📊 Dashboard":
         col3, col4 = st.columns(2)
         with col3:
             st.markdown("#### How Much Do Individual Stories Overrun?")
-            st.markdown("*The red line is zero — no overrun. Almost all bars are to the right, meaning most work takes longer than planned.*")
+            st.markdown("*The red line is zero — no overrun. Bars to the left came in under budget. Bars to the right overran.*")
             fig8 = px.histogram(filtered, x="Overrun_Pct_clean", nbins=40,
                                 color_discrete_sequence=["#7F77DD"],
-                                labels={"Overrun_Pct_clean": "Overrun % (positive = took longer than estimated)"})
+                                labels={"Overrun_Pct_clean": "Overrun % (positive = took longer, negative = under budget)"})
             fig8.add_vline(x=0, line_dash="dash", line_color="red",
-                           annotation_text="← On time  |  Over estimate →",
+                           annotation_text="← Under budget  |  Over estimate →",
                            annotation_position="top left")
             fig8.update_layout(height=360)
             st.plotly_chart(fig8, use_container_width=True)
@@ -209,22 +210,19 @@ if page == "📊 Dashboard":
         st.markdown("""
         This tab focuses specifically on **release-level overrun** — comparing what was
         estimated against what was actually delivered, release by release.
+        Green bars or blue bars taller than orange = release came in **under budget**.
         Use this to identify which releases performed well and which did not,
         then switch to the **Copilot Assistant** to investigate why.
         """)
 
-        # Release overrun % chart
         st.markdown("#### Overrun % per Release")
-        st.markdown("*How much did each release exceed its total estimated hours? Higher bar = bigger overrun.*")
+        st.markdown("*Positive = over budget. Negative = under budget (blue bars taller than orange in the chart below).*")
 
         release_overrun = release.copy()
         release_overrun["Overrun_Pct"] = (
             (release_overrun["Total_Actual_Hrs"] - release_overrun["Total_Orig_Est_Hrs"])
             / release_overrun["Total_Orig_Est_Hrs"] * 100
         ).round(1)
-        release_overrun["colour"] = release_overrun["Overrun_Pct"].apply(
-            lambda x: "#D85A30" if x > 20 else "#BA7517" if x > 10 else "#1D9E75"
-        )
 
         fig_rov = px.bar(
             release_overrun,
@@ -232,19 +230,19 @@ if page == "📊 Dashboard":
             y="Overrun_Pct",
             text="Overrun_Pct",
             color="Overrun_Pct",
-            color_continuous_scale=["#1D9E75", "#BA7517", "#D85A30"],
+            color_continuous_scale=["#1D9E75", "#FFDD57", "#D85A30"],
+            range_color=[-20, 30],
             labels={"Release_ID": "Release", "Overrun_Pct": "Overrun %"}
         )
         fig_rov.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
         fig_rov.add_hline(y=0, line_dash="dash", line_color="white",
-                          annotation_text="Zero overrun", annotation_position="top left")
+                          annotation_text="Zero overrun line", annotation_position="top left")
         fig_rov.update_layout(height=420, coloraxis_showscale=False,
                               xaxis_title="Release", yaxis_title="Overrun %")
         st.plotly_chart(fig_rov, use_container_width=True)
 
-        # Estimated vs Actual side by side
         st.markdown("#### Estimated vs Actual Hours — Release by Release")
-        st.markdown("*Light blue = original estimate. Orange = actual hours spent. The gap between them is the overrun.*")
+        st.markdown("*Light blue = original estimate. Orange = actual hours spent. When blue is TALLER than orange, the release came in under budget.*")
         fig5 = go.Figure()
         fig5.add_trace(go.Bar(
             name="Original Estimate",
@@ -263,12 +261,12 @@ if page == "📊 Dashboard":
         )
         st.plotly_chart(fig5, use_container_width=True)
 
-        # Release summary table
         st.markdown("#### Release Summary Table")
-        st.markdown("*Click a release in the filter sidebar then switch to the Copilot Assistant to investigate why it overran.*")
         summary_display = release_overrun[["Release_ID", "Total_Orig_Est_Hrs", "Total_Actual_Hrs", "Overrun_Pct"]].copy()
         summary_display.columns = ["Release", "Estimated Hours", "Actual Hours", "Overrun %"]
-        summary_display["Overrun %"] = summary_display["Overrun %"].apply(lambda x: f"+{x:.1f}%")
+        summary_display["Overrun %"] = summary_display["Overrun %"].apply(
+            lambda x: f"+{x:.1f}%" if x > 0 else f"{x:.1f}%"
+        )
         st.dataframe(summary_display, use_container_width=True, hide_index=True)
 
         st.info("💡 **How to use this tab:** Identify a release with high overrun above. Select it in the Release filter on the left. Then switch to the 🤖 Copilot Assistant and ask — 'Why did this release overrun?' or 'What types of work caused the most overrun?'")
@@ -293,18 +291,31 @@ if page == "📊 Dashboard":
 
         with col2:
             st.markdown("#### Story Points vs Actual Hours")
-            st.markdown("*Higher complexity (story points) consistently means more hours. Defects (orange) sit above the trend line — they take longer than their complexity suggests.*")
+            st.markdown("*Higher complexity consistently means more hours. Defects (orange) sit above the trend line — they take longer than their complexity suggests.*")
             fig3 = px.scatter(filtered, x="Story_Points", y="Actual_Hrs",
                               color="Item_Type", color_discrete_map=color_map,
                               hover_data=["Epic", "Feature_Size", "Team_ID", "Original_Est_Hrs"],
                               labels={"Story_Points": "Story Points (Complexity Score)",
                                       "Actual_Hrs": "Actual Hours Taken",
                                       "Item_Type": "Work Type"},
-                              trendline="ols")
+                              render_mode="svg")
+            # Manual trendline using numpy — no statsmodels needed
+            x = filtered["Story_Points"].values
+            y = filtered["Actual_Hrs"].values
+            mask = ~np.isnan(x) & ~np.isnan(y)
+            if mask.sum() > 2:
+                z = np.polyfit(x[mask], y[mask], 1)
+                p = np.poly1d(z)
+                x_line = np.linspace(x[mask].min(), x[mask].max(), 100)
+                y_line = p(x_line)
+                fig3.add_scatter(x=x_line, y=y_line,
+                                 mode="lines",
+                                 line=dict(color="white", width=2),
+                                 name="Trend",
+                                 showlegend=False)
             fig3.update_layout(height=380)
             st.plotly_chart(fig3, use_container_width=True)
 
-        # Team size distribution
         st.markdown("#### Distribution of Actual Hours by Team Size")
         st.markdown("*Select a Team Size filter on the left to see how hours distribute for that team specifically.*")
         fig_dist_team = px.histogram(
@@ -381,7 +392,7 @@ elif page == "🤖 Copilot Assistant":
     """)
     st.divider()
 
-    @st.cache_resource
+    @st.cache_resource(ttl=0)
     def load_models():
         import joblib
         import pickle
@@ -405,7 +416,7 @@ elif page == "🤖 Copilot Assistant":
         existing_releases = sorted(df["Release_ID"].unique().tolist())
         release_options   = existing_releases + ["Future Release"]
         release_sel       = st.selectbox("Release", release_options,
-                            help="Select an existing release or Future Release for upcoming ones. The model predicts for any release using cross-release patterns.")
+                            help="Select an existing release or Future Release for upcoming ones.")
         item_type         = st.selectbox("Item Type", ["Feature", "Enhancement", "Defect"],
                             help="Feature = new functionality. Enhancement = improvement. Defect = bug fix.")
         platform          = st.selectbox("Platform", ["iOS", "Android", "Platform"],
@@ -505,7 +516,7 @@ WORK ITEM:
   Story Points: {story_points} | Original Estimate: {original_est} hrs
   Team Size: {team_size} | Feature Size: {feature_size} | Has QA: {has_qa}
 
-MODEL PREDICTIONS (trained on 435 past stories):
+MODEL PREDICTIONS (trained on historical stories):
   Low: {low_pred:.0f} hrs | Central: {mid_pred:.0f} hrs | High: {high_pred:.0f} hrs
   XGBoost best: {xgb_pred:.1f} hrs
 
