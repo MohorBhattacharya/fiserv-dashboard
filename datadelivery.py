@@ -406,18 +406,18 @@ if page == "📊 Dashboard":
                                               min_value=4.0, max_value=10.0, value=7.0, step=0.5,
                                               help="Typical = 6–8 hrs.")
             sp_days        = st.number_input("Sprint length (days)",
-                                              min_value=5, max_value=30, value=14, step=1)
+                                              min_value=5, max_value=30, value=10, step=1)
             total_capacity = sp_team_size * sp_hrs_per_day * sp_days
             st.metric("Total Sprint Capacity", f"{total_capacity:.0f} hrs")
 
         with col_s2:
             st.markdown("#### Current Sprint State")
             is_mid_sprint     = st.checkbox("⚡ This is a MID-SPRINT change request", value=True)
-            pct_complete      = st.slider("Sprint % complete", 0, 100, 50,
+            pct_complete      = st.slider("Sprint % complete", 0, 100, 70,
                                           disabled=not is_mid_sprint)
             already_committed = st.number_input("Hours already committed / in-progress",
                                                  min_value=0.0, max_value=5000.0,
-                                                 value=0.0, step=10.0)
+                                                 value=100.0, step=10.0)
             if is_mid_sprint:
                 remaining_capacity = total_capacity * (1 - pct_complete / 100) - already_committed
             else:
@@ -529,8 +529,7 @@ if page == "📊 Dashboard":
                              yaxis_title="Hours", xaxis_title="")
         st.plotly_chart(fig_sp, use_container_width=True)
 
-        st.info("💡 **Tip:** To see HIGH RISK — set Sprint % complete to 90%, add committed hours close to total capacity, then increase Story Points to 13 or 21.")
-
+        st.info("💡 Fill in your actual sprint state above. The verdict updates automatically based on real remaining capacity vs the model prediction.")
 
 # ═════════════════════════════════════════════════════════════
 # PAGE 2 — COPILOT ASSISTANT
