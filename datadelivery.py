@@ -24,7 +24,25 @@ def load_data():
     ).round(1)
     return df, tasks, release
 
+# ── Load models ONCE at the top — available to ALL pages and tabs ──────────
+@st.cache_resource(ttl=0)
+def load_models():
+    import joblib
+    import pickle
+    import shap
+    xgb      = joblib.load("xgb_model.pkl")
+    knn      = joblib.load("knn_model.pkl")
+    ql       = joblib.load("qr_low.pkl")
+    qm       = joblib.load("qr_mid.pkl")
+    qh       = joblib.load("qr_high.pkl")
+    shap_exp = joblib.load("shap_explainer.pkl")
+    train_df = pd.read_csv("train_data.csv")
+    with open("features.pkl", "rb") as f:
+        feats = pickle.load(f)
+    return xgb, knn, ql, qm, qh, shap_exp, train_df, feats
+
 df, tasks, release = load_data()
+xgb_m, knn_m, ql_m, qm_m, qh_m, shap_exp, train_df, FEATS = load_models()
 
 st.sidebar.image(
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/45/Fiserv_logo.svg/320px-Fiserv_logo.svg.png",
@@ -35,7 +53,6 @@ page = st.sidebar.radio("", ["📊 Dashboard", "🤖 Copilot Assistant"])
 
 color_map = {"Defect": "#D85A30", "Enhancement": "#BA7517", "Feature": "#2E75B6"}
 
-# Encodings and mappings used across both pages
 type_enc = {"Feature": 0, "Enhancement": 1, "Defect": 2}
 plat_enc = {"iOS": 0, "Android": 1, "Platform": 2}
 size_enc = {"S": 1, "M": 2, "L": 3}
@@ -59,7 +76,6 @@ if page == "📊 Dashboard":
     """)
     st.divider()
 
-    # ── Filters ───────────────────────────────────────────────
     st.sidebar.title("Filters")
     st.sidebar.markdown("*Narrow down the data shown in all charts below.*")
 
@@ -89,7 +105,6 @@ if page == "📊 Dashboard":
     elif len(filtered) < 20:
         st.info(f"ℹ️ Only {len(filtered)} stories match this filter — results may not be fully representative.")
 
-    # ── KPI cards ─────────────────────────────────────────────
     total     = len(filtered)
     avg_hrs   = filtered["Actual_Hrs"].mean()
     med_hrs   = filtered["Actual_Hrs"].median()
@@ -109,7 +124,6 @@ if page == "📊 Dashboard":
               help="How much longer Defects took vs their estimate on average")
     st.divider()
 
-    # ── TABS ──────────────────────────────────────────────────
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📉 Overrun Analysis",
         "📊 Release Overrun",
@@ -119,7 +133,6 @@ if page == "📊 Dashboard":
         "🚨 Spillover Risk"
     ])
 
-    # ── TAB 1: Overrun Analysis ────────────────────────────────
     with tab1:
         st.markdown("### Why do projects run over time?")
         st.markdown("""
@@ -195,7 +208,6 @@ if page == "📊 Dashboard":
             fig4.update_layout(showlegend=False, height=360)
             st.plotly_chart(fig4, use_container_width=True)
 
-        # Pie chart — full width on its own row (box plot removed)
         st.markdown("#### Breakdown by Work Type")
         pie_col, _ = st.columns([1, 1])
         with pie_col:
@@ -208,7 +220,6 @@ if page == "📊 Dashboard":
             fig9.update_layout(height=340)
             st.plotly_chart(fig9, use_container_width=True)
 
-    # ── TAB 2: Release Overrun ─────────────────────────────────
     with tab2:
         st.markdown("### Which releases had the biggest overruns?")
         st.markdown("""
@@ -275,7 +286,6 @@ if page == "📊 Dashboard":
 
         st.info("💡 **How to use this tab:** Identify a release with high overrun above. Select it in the Release filter on the left. Then switch to the 🤖 Copilot Assistant and ask — 'Why did this release overrun?' or 'What types of work caused the most overrun?'")
 
-    # ── TAB 3: Effort Patterns ─────────────────────────────────
     with tab3:
         st.markdown("### How long does work actually take?")
         st.markdown("""
@@ -331,7 +341,6 @@ if page == "📊 Dashboard":
         fig_dist_team.update_layout(height=360)
         st.plotly_chart(fig_dist_team, use_container_width=True)
 
-    # ── TAB 4: Predictors ──────────────────────────────────────
     with tab4:
         st.markdown("### What best predicts how long work will take?")
         st.markdown("""
@@ -368,7 +377,6 @@ if page == "📊 Dashboard":
             fig6.update_layout(height=380)
             st.plotly_chart(fig6, use_container_width=True)
 
-    # ── TAB 5: Raw Data ────────────────────────────────────────
     with tab5:
         st.markdown("### Underlying Data")
         st.markdown("*Every row is one completed User Story. Use the filters on the left to narrow down.*")
@@ -381,7 +389,6 @@ if page == "📊 Dashboard":
         )
         st.caption(f"Showing {len(filtered)} stories  |  Built by Mohor — University of Auckland Industry Placement | Fiserv Professional Services | 2026")
 
-    # ── TAB 6: Spillover Risk ──────────────────────────────────
     with tab6:
         st.markdown("### 🚨 Will This Change Request Cause Spillover?")
         st.markdown("""
@@ -495,11 +502,11 @@ if page == "📊 Dashboard":
         """, unsafe_allow_html=True)
 
         v1, v2, v3, v4 = st.columns(4)
-        v1.metric("Remaining Capacity",    f"{remaining_capacity:.0f} hrs")
-        v2.metric("Predicted (XGBoost)",   f"{cr_xgb:.0f} hrs")
-        v3.metric("Headroom (Central)",    f"{headroom:+.0f} hrs",
+        v1.metric("Remaining Capacity",  f"{remaining_capacity:.0f} hrs")
+        v2.metric("Predicted (XGBoost)", f"{cr_xgb:.0f} hrs")
+        v3.metric("Headroom (Central)",  f"{headroom:+.0f} hrs",
                   delta_color="normal" if headroom >= 0 else "inverse")
-        v4.metric("Worst-Case Headroom",   f"{headroom_hi:+.0f} hrs",
+        v4.metric("Worst-Case Headroom", f"{headroom_hi:+.0f} hrs",
                   delta_color="normal" if headroom_hi >= 0 else "inverse")
 
         bar_data = pd.DataFrame({
@@ -524,6 +531,7 @@ if page == "📊 Dashboard":
 
         st.info("💡 **Tip:** To see HIGH RISK — set Sprint % complete to 90%, add committed hours close to total capacity, then increase Story Points to 13 or 21.")
 
+
 # ═════════════════════════════════════════════════════════════
 # PAGE 2 — COPILOT ASSISTANT
 # ═════════════════════════════════════════════════════════════
@@ -536,22 +544,6 @@ elif page == "🤖 Copilot Assistant":
     > including new releases and new enhancements not yet in the dataset.
     """)
     st.divider()
-
-    @st.cache_resource(ttl=0)
-    def load_models():
-        import joblib, pickle, shap
-        xgb      = joblib.load("xgb_model.pkl")
-        knn      = joblib.load("knn_model.pkl")
-        ql       = joblib.load("qr_low.pkl")
-        qm       = joblib.load("qr_mid.pkl")
-        qh       = joblib.load("qr_high.pkl")
-        shap_exp = joblib.load("shap_explainer.pkl")
-        train_df = pd.read_csv("train_data.csv")
-        with open("features.pkl", "rb") as f:
-            feats = pickle.load(f)
-        return xgb, knn, ql, qm, qh, shap_exp, train_df, feats
-
-    xgb_m, knn_m, ql_m, qm_m, qh_m, shap_exp, train_df, FEATS = load_models()
 
     st.subheader("Step 1 — Describe the work item")
     col_a, col_b, col_c = st.columns(3)
@@ -581,7 +573,6 @@ elif page == "🤖 Copilot Assistant":
         has_qa       = st.selectbox("Has QA Task?", ["Yes", "No"],
                         help="Does this story require quality assurance testing?")
 
-    # ── Mid-Sprint Context ─────────────────────────────────────
     st.divider()
     st.subheader("Step 1b — Mid-Sprint Context (optional)")
     st.markdown("*Fill this in if the customer is requesting a change while a sprint is already in progress.*")
@@ -607,7 +598,7 @@ elif page == "🤖 Copilot Assistant":
             "Total sprint capacity (hrs)",
             min_value=10.0, value=default_cap, step=10.0,
             disabled=not mid_sprint_cr, key="cop_cap",
-            help="Team Size × hrs/day × sprint days. Auto-filled as 7 hrs/day × 14 days."
+            help="Team Size x hrs/day x sprint days. Auto-filled as 7 hrs/day x 14 days."
         )
 
     sprint_num = release_sprint.get(release_sel, 55)
@@ -633,7 +624,6 @@ elif page == "🤖 Copilot Assistant":
     mid_pred  = qm_m.predict(X_input)[0]
     high_pred = qh_m.predict(X_input)[0]
 
-    # ── Mid-sprint capacity verdict ────────────────────────────
     if mid_sprint_cr:
         mid_remaining = mid_capacity * (1 - mid_pct / 100) - mid_committed
         mid_fits      = mid_remaining >= xgb_pred
@@ -681,7 +671,6 @@ elif page == "🤖 Copilot Assistant":
                         f"Actual: {past['Actual_Hrs']:.0f} hrs | "
                         f"Overrun: {overrun:+.0f}%")
 
-    # Build mid-sprint section for the system prompt
     mid_sprint_context = ""
     if mid_sprint_cr:
         mid_remaining = mid_capacity * (1 - mid_pct / 100) - mid_committed
