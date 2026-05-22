@@ -559,7 +559,7 @@ elif page == "🤖 Copilot Assistant":
                             help="Platform = backend/API work.")
 
     with col_b:
-        story_points = st.selectbox("Story Points", [1, 2, 3, 5, 8, 13, 21],
+        story_points = st.slider("Story Points", 1, 21, 5,
                         help="Team's complexity score. Higher = more complex = more hours.")
         original_est = st.number_input("Original Estimate (hrs)",
                         min_value=1.0, max_value=300.0, value=40.0, step=1.0,
