@@ -24,7 +24,6 @@ def load_data():
     ).round(1)
     return df, tasks, release
 
-# ── Load models ONCE at the top — available to ALL pages and tabs ──────────
 @st.cache_resource(ttl=0)
 def load_models():
     import joblib
@@ -401,7 +400,9 @@ if page == "📊 Dashboard":
 
         with col_s1:
             st.markdown("#### Sprint Capacity")
-            sp_team_size   = st.selectbox("Team Size (people)", [3, 8, 10], key="sp_ts")
+            # CHANGE 1 — Team size is now a slider from 1 to 10
+            sp_team_size   = st.slider("Team Size (people)", 1, 10, 5, key="sp_ts",
+                                        help="Any team size from 1 to 10 people.")
             sp_hrs_per_day = st.number_input("Working hrs per person per day",
                                               min_value=4.0, max_value=10.0, value=7.0, step=0.5,
                                               help="Typical = 6–8 hrs.")
@@ -413,11 +414,15 @@ if page == "📊 Dashboard":
         with col_s2:
             st.markdown("#### Current Sprint State")
             is_mid_sprint     = st.checkbox("⚡ This is a MID-SPRINT change request", value=True)
-            pct_complete      = st.slider("Sprint % complete", 0, 100, 70,
-                                          disabled=not is_mid_sprint)
+            # CHANGE 2 — Help text clarifies 1 working day = 10% of a 10-day sprint
+            pct_complete      = st.slider("Sprint % complete", 0, 100, 50,
+                                          disabled=not is_mid_sprint,
+                                          help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%.")
+            # CHANGE 3 — Default committed hours is 0 so remaining capacity is not 0 by default
             already_committed = st.number_input("Hours already committed / in-progress",
                                                  min_value=0.0, max_value=5000.0,
-                                                 value=100.0, step=10.0)
+                                                 value=0.0, step=10.0,
+                                                 help="Work already assigned or in progress this sprint.")
             if is_mid_sprint:
                 remaining_capacity = total_capacity * (1 - pct_complete / 100) - already_committed
             else:
@@ -432,10 +437,10 @@ if page == "📊 Dashboard":
 
         with cr_col1:
             cr_story_pts = st.slider("Story Points", 1, 21, 5, key="cr_sp")
-            cr_orig_est = st.number_input("Original Estimate (hrs)",
-                               min_value=1.0, max_value=300.0,
-                               value=float(cr_story_pts * 8),
-                               step=1.0, key="cr_oe")
+            cr_orig_est  = st.number_input("Original Estimate (hrs)",
+                                            min_value=1.0, max_value=300.0,
+                                            value=float(cr_story_pts * 8),
+                                            step=1.0, key="cr_oe")
         with cr_col2:
             cr_item_type = st.selectbox("Item Type", ["Feature", "Enhancement", "Defect"], key="cr_it")
             cr_platform  = st.selectbox("Platform", ["iOS", "Android", "Platform"], key="cr_pl")
@@ -532,6 +537,7 @@ if page == "📊 Dashboard":
 
         st.info("💡 Fill in your actual sprint state above. The verdict updates automatically based on real remaining capacity vs the model prediction.")
 
+
 # ═════════════════════════════════════════════════════════════
 # PAGE 2 — COPILOT ASSISTANT
 # ═════════════════════════════════════════════════════════════
@@ -566,7 +572,8 @@ elif page == "🤖 Copilot Assistant":
                         help="How many hours the team originally estimated for this work item.")
 
     with col_c:
-        team_size    = st.selectbox("Team Size", [3, 8, 10],
+        # CHANGE 1 — Team size slider 1 to 10 in Copilot too
+        team_size    = st.slider("Team Size", 1, 10, 5, key="cop_team_size",
                         help="Number of people on the team.")
         feature_size = st.selectbox("Feature Size", ["S", "M", "L"],
                         help="S = Small, M = Medium, L = Large.")
@@ -583,7 +590,7 @@ elif page == "🤖 Copilot Assistant":
         mid_pct       = st.slider(
             "Sprint % complete", 0, 100, 50,
             disabled=not mid_sprint_cr, key="cop_mid",
-            help="How far through the current sprint is the team?"
+            help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%."
         )
     with mid_col2:
         mid_committed = st.number_input(
