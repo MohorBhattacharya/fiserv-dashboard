@@ -537,6 +537,54 @@ if page == "📊 Dashboard":
 
         st.info("💡 Fill in your actual sprint state above. The verdict updates automatically based on real remaining capacity vs the model prediction.")
 
+        st.divider()
+        st.markdown("#### 🔗 What Drives the Spillover Verdict?")
+        st.markdown("""
+        The verdict is determined by two independent components. Understanding which inputs affect which component helps explain why the verdict changes the way it does.
+        """)
+
+        col_d1, col_d2 = st.columns(2)
+
+        with col_d1:
+            st.markdown("##### Component 1 — Remaining Capacity")
+            st.markdown("*This is pure arithmetic. These three inputs directly control how much capacity is left:*")
+            capacity_data = pd.DataFrame({
+                "Input": ["Sprint % Complete", "Team Size", "Sprint Length (days)", "Working Hrs/Day"],
+                "Impact": ["🔴 High", "🟠 Medium", "🟠 Medium", "🟠 Medium"],
+                "How": [
+                    "More % complete = less remaining capacity",
+                    "Larger team = more total capacity",
+                    "Longer sprint = more total capacity",
+                    "More hrs/day = more total capacity"
+                ]
+            })
+            st.dataframe(capacity_data, use_container_width=True, hide_index=True)
+
+        with col_d2:
+            st.markdown("##### Component 2 — Predicted Effort (XGBoost)")
+            st.markdown("*These inputs feed the ML model. Story Points and Original Estimate are the strongest signals:*")
+            effort_data = pd.DataFrame({
+                "Input": ["Story Points", "Original Estimate (hrs)", "Item Type", "Feature Size", "Has QA", "Platform"],
+                "Impact": ["🔴 High", "🔴 High", "🟡 Low", "🟡 Low", "🟡 Low", "🟡 Low"],
+                "How": [
+                    "Higher points = more predicted hours",
+                    "Higher estimate = more predicted hours",
+                    "Defects tend to overrun most",
+                    "Larger size = slightly more hours",
+                    "QA adds effort",
+                    "Minor effect on prediction"
+                ]
+            })
+            st.dataframe(effort_data, use_container_width=True, hide_index=True)
+
+        st.markdown("""
+        **Verdict logic:** The system compares remaining capacity against the XGBoost prediction.
+        - 🟢 **Low Risk** — all three estimates (low, central, high) fit within remaining capacity
+        - 🟡 **Medium Risk** — central fits but high scenario is tight
+        - 🟠 **Medium-High** — central fits but worst case causes spillover
+        - 🔴 **High Risk** — predicted hours exceed remaining capacity across all scenarios
+        """)
+
 
 # ═════════════════════════════════════════════════════════════
 # PAGE 2 — COPILOT ASSISTANT
