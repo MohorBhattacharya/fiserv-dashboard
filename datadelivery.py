@@ -400,7 +400,6 @@ if page == "📊 Dashboard":
 
         with col_s1:
             st.markdown("#### Sprint Capacity")
-            # CHANGE 1 — Team size is now a slider from 1 to 10
             sp_team_size   = st.slider("Team Size (people)", 1, 10, 5, key="sp_ts",
                                         help="Any team size from 1 to 10 people.")
             sp_hrs_per_day = st.number_input("Working hrs per person per day",
@@ -413,20 +412,20 @@ if page == "📊 Dashboard":
 
         with col_s2:
             st.markdown("#### Current Sprint State")
-            is_mid_sprint     = st.checkbox("⚡ This is a MID-SPRINT change request", value=True)
-            # CHANGE 2 — Help text clarifies 1 working day = 10% of a 10-day sprint
-            pct_complete      = st.slider("Sprint % complete", 0, 100, 50,
-                                          disabled=not is_mid_sprint,
-                                          help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%.")
-            # CHANGE 3 — Default committed hours is 0 so remaining capacity is not 0 by default
+            is_mid_sprint  = st.checkbox("⚡ This is a MID-SPRINT change request", value=True)
+            pct_complete   = st.slider("Sprint % complete", 0, 100, 50,
+                                       disabled=not is_mid_sprint,
+                                       help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%.")
             already_committed = st.number_input("Hours already committed / in-progress",
                                                  min_value=0.0, max_value=5000.0,
                                                  value=0.0, step=10.0,
-                                                 help="Work already assigned or in progress this sprint.")
+                                                 help="For reference only — shows how much work is already assigned this sprint.")
+
+            # FIX — remaining capacity uses sprint % only, no double-counting
             if is_mid_sprint:
                 remaining_capacity = total_capacity * (1 - pct_complete / 100)
             else:
-                remaining_capacity = total_capacity - already_committed
+                remaining_capacity = total_capacity
 
             remaining_capacity = max(remaining_capacity, 0)
             st.metric("Remaining Capacity", f"{remaining_capacity:.0f} hrs")
@@ -547,7 +546,7 @@ if page == "📊 Dashboard":
 
         with col_d1:
             st.markdown("##### Component 1 — Remaining Capacity")
-            st.markdown("*This is pure arithmetic. These three inputs directly control how much capacity is left:*")
+            st.markdown("*Pure arithmetic — no ML involved. Remaining capacity = Total Capacity x (1 - Sprint % Complete):*")
             capacity_data = pd.DataFrame({
                 "Input": ["Sprint % Complete", "Team Size", "Sprint Length (days)", "Working Hrs/Day"],
                 "Impact": ["🔴 High", "🟠 Medium", "🟠 Medium", "🟠 Medium"],
@@ -620,7 +619,6 @@ elif page == "🤖 Copilot Assistant":
                         help="How many hours the team originally estimated for this work item.")
 
     with col_c:
-        # CHANGE 1 — Team size slider 1 to 10 in Copilot too
         team_size    = st.slider("Team Size", 1, 10, 5, key="cop_team_size",
                         help="Number of people on the team.")
         feature_size = st.selectbox("Feature Size", ["S", "M", "L"],
@@ -645,7 +643,7 @@ elif page == "🤖 Copilot Assistant":
             "Hours already committed this sprint",
             min_value=0.0, value=0.0, step=5.0,
             disabled=not mid_sprint_cr, key="cop_comm",
-            help="Hours already in-progress or assigned this sprint."
+            help="For reference only — shows how much work is already assigned this sprint."
         )
     with mid_col3:
         default_cap = float(team_size * 7 * 14)
@@ -680,7 +678,8 @@ elif page == "🤖 Copilot Assistant":
     high_pred = qh_m.predict(X_input)[0]
 
     if mid_sprint_cr:
-        mid_remaining = mid_capacity * (1 - mid_pct / 100) - mid_committed
+        # FIX — remaining capacity uses sprint % only, no double-counting
+        mid_remaining = mid_capacity * (1 - mid_pct / 100)
         mid_fits      = mid_remaining >= xgb_pred
         mid_headroom  = mid_remaining - xgb_pred
         verdict_label = "✅ FITS in remaining capacity" if mid_fits else "🚨 SPILLOVER RISK"
@@ -728,13 +727,13 @@ elif page == "🤖 Copilot Assistant":
 
     mid_sprint_context = ""
     if mid_sprint_cr:
-        mid_remaining = mid_capacity * (1 - mid_pct / 100) - mid_committed
+        # FIX — remaining capacity uses sprint % only
+        mid_remaining = mid_capacity * (1 - mid_pct / 100)
         fits          = mid_remaining >= xgb_pred
         mid_sprint_context = f"""
 MID-SPRINT CONTEXT:
   Sprint is {mid_pct}% complete.
   Total sprint capacity: {mid_capacity:.0f} hrs
-  Hours already committed: {mid_committed:.0f} hrs
   Remaining capacity: {max(mid_remaining, 0):.0f} hrs
   XGBoost predicts this item needs: {xgb_pred:.1f} hrs
   Verdict: {"FITS within remaining capacity." if fits else "SPILLOVER RISK — predicted hours exceed remaining capacity."}
