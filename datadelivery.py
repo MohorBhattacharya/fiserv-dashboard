@@ -424,7 +424,7 @@ if page == "📊 Dashboard":
                                                  value=0.0, step=10.0,
                                                  help="Work already assigned or in progress this sprint.")
             if is_mid_sprint:
-                remaining_capacity = total_capacity * (1 - pct_complete / 100) - already_committed
+                remaining_capacity = total_capacity * (1 - pct_complete / 100)
             else:
                 remaining_capacity = total_capacity - already_committed
 
