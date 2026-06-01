@@ -222,15 +222,13 @@ if page == "📊 Dashboard":
     with tab2:
         st.markdown("### Which releases had the biggest overruns?")
         st.markdown("""
-        This tab focuses specifically on **release-level overrun** — comparing what was
-        estimated against what was actually delivered, release by release.
-        Green bars or blue bars taller than orange = release came in **under budget**.
-        Use this to identify which releases performed well and which did not,
-        then switch to the **Copilot Assistant** to investigate why.
+        This tab shows **release-level overrun** — comparing total estimated hours against
+        what was actually delivered, release by release.
+        Green bars indicate the release came in **under budget**; red bars indicate **over budget**.
         """)
 
         st.markdown("#### Overrun % per Release")
-        st.markdown("*Positive = over budget. Negative = under budget (blue bars taller than orange in the chart below).*")
+        st.markdown("*Positive = over budget. Negative = under budget.*")
 
         release_overrun = release.copy()
         release_overrun["Overrun_Pct"] = (
@@ -256,7 +254,7 @@ if page == "📊 Dashboard":
         st.plotly_chart(fig_rov, use_container_width=True)
 
         st.markdown("#### Estimated vs Actual Hours — Release by Release")
-        st.markdown("*Light blue = original estimate. Orange = actual hours spent. When blue is TALLER than orange, the release came in under budget.*")
+        st.markdown("*Light blue = original estimate. Orange = actual hours spent. When orange is taller than blue, the release went over budget.*")
         fig5 = go.Figure()
         fig5.add_trace(go.Bar(
             name="Original Estimate",
@@ -283,7 +281,10 @@ if page == "📊 Dashboard":
         )
         st.dataframe(summary_display, use_container_width=True, hide_index=True)
 
-        st.info("💡 **How to use this tab:** Identify a release with high overrun above. Select it in the Release filter on the left. Then switch to the 🤖 Copilot Assistant and ask — 'Why did this release overrun?' or 'What types of work caused the most overrun?'")
+        # FIX — tooltip rewritten to make sense without implying the sidebar filter carries over to the Copilot page
+        st.info("""💡 **How to use this tab:** Identify a release with a high overrun % in the chart above.
+Use the Release filter on the left to drill into that release's individual stories across the other tabs (Overrun Analysis, Effort Patterns, Raw Data).
+To ask the AI why a release overran, navigate to the 🤖 Copilot Assistant page and describe the release details there.""")
 
     with tab3:
         st.markdown("### How long does work actually take?")
@@ -412,23 +413,29 @@ if page == "📊 Dashboard":
 
         with col_s2:
             st.markdown("#### Current Sprint State")
-            is_mid_sprint  = st.checkbox("⚡ This is a MID-SPRINT change request", value=True)
-            pct_complete   = st.slider("Sprint % complete", 0, 100, 50,
-                                       disabled=not is_mid_sprint,
-                                       help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%.")
-            already_committed = st.number_input("Hours already committed / in-progress",
-                                                 min_value=0.0, max_value=5000.0,
-                                                 value=0.0, step=10.0,
-                                                 help="For reference only — shows how much work is already assigned this sprint.")
+            is_mid_sprint     = st.checkbox("⚡ This is a MID-SPRINT change request", value=True)
+            pct_complete      = st.slider("Sprint % complete", 0, 100, 50,
+                                          disabled=not is_mid_sprint,
+                                          help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%.")
+            # FIX — committed hours now subtracted from remaining capacity (Justin Approach 2)
+            already_committed = st.number_input(
+                "Hours already committed / in-progress",
+                min_value=0.0, max_value=float(total_capacity),
+                value=0.0, step=10.0,
+                help="Work already assigned or in-progress this sprint. Subtracted from total capacity to give true remaining capacity."
+            )
 
-            # FIX — remaining capacity uses sprint % only, no double-counting
             if is_mid_sprint:
-                remaining_capacity = total_capacity * (1 - pct_complete / 100)
+                # Remaining = Total capacity − hours already committed − hours consumed by sprint % progress
+                # Justin's intent: committed hours represent planned allocation, so remaining = total − committed
+                # Sprint % complete is an independent signal used in the verdict narrative only
+                remaining_capacity = max(total_capacity - already_committed, 0)
             else:
-                remaining_capacity = total_capacity
+                remaining_capacity = max(total_capacity - already_committed, 0)
 
             remaining_capacity = max(remaining_capacity, 0)
-            st.metric("Remaining Capacity", f"{remaining_capacity:.0f} hrs")
+            st.metric("Remaining Capacity", f"{remaining_capacity:.0f} hrs",
+                      help="Total sprint capacity minus hours already committed to other work.")
 
         st.divider()
         st.markdown("#### Change Request Details")
@@ -442,9 +449,11 @@ if page == "📊 Dashboard":
                                             step=1.0, key="cr_oe")
         with cr_col2:
             cr_item_type = st.selectbox("Item Type", ["Feature", "Enhancement", "Defect"], key="cr_it")
-            cr_platform  = st.selectbox("Platform", ["iOS", "Android", "Platform"], key="cr_pl")
+            # FIX — "Platform" label changed to "Channel or Domain" per Justin's feedback
+            cr_platform  = st.selectbox("Channel or Domain", ["iOS", "Android", "Platform"], key="cr_pl")
         with cr_col3:
-            cr_feat_size = st.selectbox("Feature Size", ["S", "M", "L"], key="cr_fs")
+            # FIX — "Feature Size" label changed to "Change Size" per Justin's feedback
+            cr_feat_size = st.selectbox("Change Size", ["S", "M", "L"], key="cr_fs")
             cr_has_qa    = st.selectbox("Has QA?", ["Yes", "No"], key="cr_qa")
 
         cr_sprint_num = release_sprint.get(sel_release, 30) if sel_release != "All" else 30
@@ -534,7 +543,37 @@ if page == "📊 Dashboard":
                              yaxis_title="Hours", xaxis_title="")
         st.plotly_chart(fig_sp, use_container_width=True)
 
-        st.info("💡 Fill in your actual sprint state above. The verdict updates automatically based on real remaining capacity vs the model prediction.")
+        # FIX — written scenario narrative explaining exactly how the verdict was reached
+        st.divider()
+        st.markdown("#### 📋 How Was This Verdict Reached?")
+
+        narrative_committed = f"{already_committed:.0f} hrs already committed to other work this sprint"
+        narrative_remaining = f"{remaining_capacity:.0f} hrs remaining (= {total_capacity:.0f} total − {already_committed:.0f} committed)"
+        narrative_xgb       = f"XGBoost predicts this change request will take **{cr_xgb:.0f} hrs**"
+        narrative_headroom  = f"Headroom = {remaining_capacity:.0f} − {cr_xgb:.0f} = **{headroom:+.0f} hrs**"
+
+        st.markdown(f"""
+        Here is a step-by-step explanation of how the system arrived at the **{risk_level}** verdict:
+
+        **Step 1 — Sprint Capacity**
+        The team has **{sp_team_size} people**, working **{sp_hrs_per_day:.0f} hrs/day** over a **{sp_days:.0f}-day sprint**.
+        Total sprint capacity = {sp_team_size} × {sp_hrs_per_day:.0f} × {sp_days:.0f} = **{total_capacity:.0f} hrs**.
+
+        **Step 2 — Remaining Capacity**
+        With {narrative_committed}, the {narrative_remaining}.
+
+        **Step 3 — Effort Prediction**
+        For a **{cr_item_type}** with **{cr_story_pts} story points** and an original estimate of **{cr_orig_est:.0f} hrs**,
+        the {narrative_xgb}. The quantile model also gives a range: Low {cr_low:.0f} hrs → High {cr_high:.0f} hrs.
+
+        **Step 4 — Verdict**
+        {narrative_headroom}.
+        {"All three estimates (low, central, high) fit within remaining capacity — low spillover risk." if headroom > 0 and headroom_lo > 0 and headroom_hi > 0
+          else "The central estimate fits but the worst-case scenario would exceed capacity." if headroom > 0 and headroom_hi <= 0
+          else "The predicted hours exceed remaining capacity — spillover is likely."}
+        """)
+
+        st.info("💡 Fill in your actual sprint state above. The verdict and this narrative update automatically.")
 
         st.divider()
         st.markdown("#### 🔗 What Drives the Spillover Verdict?")
@@ -546,12 +585,12 @@ if page == "📊 Dashboard":
 
         with col_d1:
             st.markdown("##### Component 1 — Remaining Capacity")
-            st.markdown("*Pure arithmetic — no ML involved. Remaining capacity = Total Capacity x (1 - Sprint % Complete):*")
+            st.markdown("*Pure arithmetic — no ML involved. Remaining capacity = Total Capacity − Hours Already Committed:*")
             capacity_data = pd.DataFrame({
-                "Input": ["Sprint % Complete", "Team Size", "Sprint Length (days)", "Working Hrs/Day"],
+                "Input": ["Hours Already Committed", "Team Size", "Sprint Length (days)", "Working Hrs/Day"],
                 "Impact": ["🔴 High", "🟠 Medium", "🟠 Medium", "🟠 Medium"],
                 "How": [
-                    "More % complete = less remaining capacity",
+                    "More hours committed = less remaining capacity",
                     "Larger team = more total capacity",
                     "Longer sprint = more total capacity",
                     "More hrs/day = more total capacity"
@@ -563,7 +602,7 @@ if page == "📊 Dashboard":
             st.markdown("##### Component 2 — Predicted Effort (XGBoost)")
             st.markdown("*These inputs feed the ML model. Story Points and Original Estimate are the strongest signals:*")
             effort_data = pd.DataFrame({
-                "Input": ["Story Points", "Original Estimate (hrs)", "Item Type", "Feature Size", "Has QA", "Platform"],
+                "Input": ["Story Points", "Original Estimate (hrs)", "Item Type", "Change Size", "Has QA", "Channel or Domain"],
                 "Impact": ["🔴 High", "🔴 High", "🟡 Low", "🟡 Low", "🟡 Low", "🟡 Low"],
                 "How": [
                     "Higher points = more predicted hours",
@@ -608,8 +647,9 @@ elif page == "🤖 Copilot Assistant":
                             help="Select an existing release or Future Release for upcoming ones.")
         item_type         = st.selectbox("Item Type", ["Feature", "Enhancement", "Defect"],
                             help="Feature = new functionality. Enhancement = improvement. Defect = bug fix.")
-        platform          = st.selectbox("Platform", ["iOS", "Android", "Platform"],
-                            help="Platform = backend/API work.")
+        # FIX — label updated to "Channel or Domain"
+        platform          = st.selectbox("Channel or Domain", ["iOS", "Android", "Platform"],
+                            help="iOS / Android = mobile channels. Platform = backend/API work.")
 
     with col_b:
         story_points = st.slider("Story Points", 1, 21, 5,
@@ -621,7 +661,8 @@ elif page == "🤖 Copilot Assistant":
     with col_c:
         team_size    = st.slider("Team Size", 1, 10, 5, key="cop_team_size",
                         help="Number of people on the team.")
-        feature_size = st.selectbox("Feature Size", ["S", "M", "L"],
+        # FIX — label updated to "Change Size"
+        feature_size = st.selectbox("Change Size", ["S", "M", "L"],
                         help="S = Small, M = Medium, L = Large.")
         has_qa       = st.selectbox("Has QA Task?", ["Yes", "No"],
                         help="Does this story require quality assurance testing?")
@@ -639,11 +680,12 @@ elif page == "🤖 Copilot Assistant":
             help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%."
         )
     with mid_col2:
+        # FIX — committed hours now subtracted from capacity (consistent with Spillover tab)
         mid_committed = st.number_input(
             "Hours already committed this sprint",
             min_value=0.0, value=0.0, step=5.0,
             disabled=not mid_sprint_cr, key="cop_comm",
-            help="For reference only — shows how much work is already assigned this sprint."
+            help="Work already assigned or in-progress this sprint. Subtracted from total capacity to give true remaining capacity."
         )
     with mid_col3:
         default_cap = float(team_size * 7 * 14)
@@ -678,14 +720,14 @@ elif page == "🤖 Copilot Assistant":
     high_pred = qh_m.predict(X_input)[0]
 
     if mid_sprint_cr:
-        # FIX — remaining capacity uses sprint % only, no double-counting
-        mid_remaining = mid_capacity * (1 - mid_pct / 100)
+        # FIX — remaining capacity = total − committed (consistent with Spillover tab)
+        mid_remaining = max(mid_capacity - mid_committed, 0)
         mid_fits      = mid_remaining >= xgb_pred
         mid_headroom  = mid_remaining - xgb_pred
         verdict_label = "✅ FITS in remaining capacity" if mid_fits else "🚨 SPILLOVER RISK"
         st.metric(
             "Remaining Sprint Capacity",
-            f"{max(mid_remaining, 0):.0f} hrs",
+            f"{mid_remaining:.0f} hrs",
             delta=f"{verdict_label}  |  Headroom: {mid_headroom:+.0f} hrs",
             delta_color="normal" if mid_fits else "inverse"
         )
@@ -727,14 +769,14 @@ elif page == "🤖 Copilot Assistant":
 
     mid_sprint_context = ""
     if mid_sprint_cr:
-        # FIX — remaining capacity uses sprint % only
-        mid_remaining = mid_capacity * (1 - mid_pct / 100)
+        mid_remaining = max(mid_capacity - mid_committed, 0)
         fits          = mid_remaining >= xgb_pred
         mid_sprint_context = f"""
 MID-SPRINT CONTEXT:
   Sprint is {mid_pct}% complete.
   Total sprint capacity: {mid_capacity:.0f} hrs
-  Remaining capacity: {max(mid_remaining, 0):.0f} hrs
+  Hours already committed: {mid_committed:.0f} hrs
+  Remaining capacity: {mid_remaining:.0f} hrs (= {mid_capacity:.0f} − {mid_committed:.0f})
   XGBoost predicts this item needs: {xgb_pred:.1f} hrs
   Verdict: {"FITS within remaining capacity." if fits else "SPILLOVER RISK — predicted hours exceed remaining capacity."}
   Headroom: {mid_remaining - xgb_pred:+.0f} hrs
@@ -749,9 +791,9 @@ When asked about new releases or future sprints, confidently use these cross-rel
 
 WORK ITEM:
   Release: {release_sel}
-  Type: {item_type} | Platform: {platform}
+  Type: {item_type} | Channel or Domain: {platform}
   Story Points: {story_points} | Original Estimate: {original_est} hrs
-  Team Size: {team_size} | Feature Size: {feature_size} | Has QA: {has_qa}
+  Team Size: {team_size} | Change Size: {feature_size} | Has QA: {has_qa}
 
 MODEL PREDICTIONS (trained on historical stories):
   Low: {low_pred:.0f} hrs | Central: {mid_pred:.0f} hrs | High: {high_pred:.0f} hrs
