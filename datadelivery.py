@@ -417,25 +417,23 @@ To ask the AI why a release overran, navigate to the 🤖 Copilot Assistant page
             pct_complete      = st.slider("Sprint % complete", 0, 100, 50,
                                           disabled=not is_mid_sprint,
                                           help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%.")
-            # FIX — committed hours now subtracted from remaining capacity (Justin Approach 2)
             already_committed = st.number_input(
                 "Hours already committed / in-progress",
-                min_value=0.0, max_value=float(total_capacity),
+                min_value=0.0, max_value=5000.0,
                 value=0.0, step=10.0,
-                help="Work already assigned or in-progress this sprint. Subtracted from total capacity to give true remaining capacity."
+                help="For reference only — shows how much work is already assigned this sprint. Does NOT affect the remaining capacity calculation."
             )
 
+            # Remaining capacity uses sprint % complete only (Justin Approach 1).
+            # Committed hours are NOT deducted — they are reference only.
             if is_mid_sprint:
-                # Remaining = Total capacity − hours already committed − hours consumed by sprint % progress
-                # Justin's intent: committed hours represent planned allocation, so remaining = total − committed
-                # Sprint % complete is an independent signal used in the verdict narrative only
-                remaining_capacity = max(total_capacity - already_committed, 0)
+                remaining_capacity = total_capacity * (1 - pct_complete / 100)
             else:
-                remaining_capacity = max(total_capacity - already_committed, 0)
+                remaining_capacity = total_capacity
 
             remaining_capacity = max(remaining_capacity, 0)
             st.metric("Remaining Capacity", f"{remaining_capacity:.0f} hrs",
-                      help="Total sprint capacity minus hours already committed to other work.")
+                      help="Total sprint capacity × (1 − sprint % complete).")
 
         st.divider()
         st.markdown("#### Change Request Details")
@@ -547,8 +545,7 @@ To ask the AI why a release overran, navigate to the 🤖 Copilot Assistant page
         st.divider()
         st.markdown("#### 📋 How Was This Verdict Reached?")
 
-        narrative_committed = f"{already_committed:.0f} hrs already committed to other work this sprint"
-        narrative_remaining = f"{remaining_capacity:.0f} hrs remaining (= {total_capacity:.0f} total − {already_committed:.0f} committed)"
+        narrative_remaining = f"remaining capacity = {total_capacity:.0f} × (1 − {pct_complete}%) = **{remaining_capacity:.0f} hrs**"
         narrative_xgb       = f"XGBoost predicts this change request will take **{cr_xgb:.0f} hrs**"
         narrative_headroom  = f"Headroom = {remaining_capacity:.0f} − {cr_xgb:.0f} = **{headroom:+.0f} hrs**"
 
@@ -560,7 +557,8 @@ To ask the AI why a release overran, navigate to the 🤖 Copilot Assistant page
         Total sprint capacity = {sp_team_size} × {sp_hrs_per_day:.0f} × {sp_days:.0f} = **{total_capacity:.0f} hrs**.
 
         **Step 2 — Remaining Capacity**
-        With {narrative_committed}, the {narrative_remaining}.
+        The sprint is **{pct_complete}% complete**, so the {narrative_remaining}.
+        (The "hours already committed" field is shown for reference only and does not affect this calculation.)
 
         **Step 3 — Effort Prediction**
         For a **{cr_item_type}** with **{cr_story_pts} story points** and an original estimate of **{cr_orig_est:.0f} hrs**,
@@ -585,12 +583,12 @@ To ask the AI why a release overran, navigate to the 🤖 Copilot Assistant page
 
         with col_d1:
             st.markdown("##### Component 1 — Remaining Capacity")
-            st.markdown("*Pure arithmetic — no ML involved. Remaining capacity = Total Capacity − Hours Already Committed:*")
+            st.markdown("*Pure arithmetic — no ML involved. Remaining capacity = Total Capacity × (1 − Sprint % Complete):*")
             capacity_data = pd.DataFrame({
-                "Input": ["Hours Already Committed", "Team Size", "Sprint Length (days)", "Working Hrs/Day"],
+                "Input": ["Sprint % Complete", "Team Size", "Sprint Length (days)", "Working Hrs/Day"],
                 "Impact": ["🔴 High", "🟠 Medium", "🟠 Medium", "🟠 Medium"],
                 "How": [
-                    "More hours committed = less remaining capacity",
+                    "More % complete = less remaining capacity",
                     "Larger team = more total capacity",
                     "Longer sprint = more total capacity",
                     "More hrs/day = more total capacity"
@@ -680,12 +678,11 @@ elif page == "🤖 Copilot Assistant":
             help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%."
         )
     with mid_col2:
-        # FIX — committed hours now subtracted from capacity (consistent with Spillover tab)
         mid_committed = st.number_input(
             "Hours already committed this sprint",
             min_value=0.0, value=0.0, step=5.0,
             disabled=not mid_sprint_cr, key="cop_comm",
-            help="Work already assigned or in-progress this sprint. Subtracted from total capacity to give true remaining capacity."
+            help="For reference only — shows how much work is already assigned this sprint. Does NOT affect the remaining capacity calculation."
         )
     with mid_col3:
         default_cap = float(team_size * 7 * 14)
@@ -720,8 +717,9 @@ elif page == "🤖 Copilot Assistant":
     high_pred = qh_m.predict(X_input)[0]
 
     if mid_sprint_cr:
-        # FIX — remaining capacity = total − committed (consistent with Spillover tab)
-        mid_remaining = max(mid_capacity - mid_committed, 0)
+        # Remaining capacity uses sprint % complete only (Justin Approach 1).
+        # Committed hours are NOT deducted — reference only.
+        mid_remaining = mid_capacity * (1 - mid_pct / 100)
         mid_fits      = mid_remaining >= xgb_pred
         mid_headroom  = mid_remaining - xgb_pred
         verdict_label = "✅ FITS in remaining capacity" if mid_fits else "🚨 SPILLOVER RISK"
@@ -769,14 +767,14 @@ elif page == "🤖 Copilot Assistant":
 
     mid_sprint_context = ""
     if mid_sprint_cr:
-        mid_remaining = max(mid_capacity - mid_committed, 0)
+        mid_remaining = mid_capacity * (1 - mid_pct / 100)
         fits          = mid_remaining >= xgb_pred
         mid_sprint_context = f"""
 MID-SPRINT CONTEXT:
   Sprint is {mid_pct}% complete.
   Total sprint capacity: {mid_capacity:.0f} hrs
-  Hours already committed: {mid_committed:.0f} hrs
-  Remaining capacity: {mid_remaining:.0f} hrs (= {mid_capacity:.0f} − {mid_committed:.0f})
+  Remaining capacity: {mid_remaining:.0f} hrs (= {mid_capacity:.0f} × (1 − {mid_pct}%))
+  (Hours already committed: {mid_committed:.0f} hrs — reference only, not deducted)
   XGBoost predicts this item needs: {xgb_pred:.1f} hrs
   Verdict: {"FITS within remaining capacity." if fits else "SPILLOVER RISK — predicted hours exceed remaining capacity."}
   Headroom: {mid_remaining - xgb_pred:+.0f} hrs
