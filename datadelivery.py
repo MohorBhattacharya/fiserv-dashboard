@@ -655,12 +655,14 @@ elif page == "🤖 Copilot Assistant":
     c_intro1, c_intro2 = st.columns(2)
     with c_intro1:
         st.info("""**💬 Ask about releases & past data**
+
 No setup needed. Try:
 - *“Why did REL-X6 overrun?”*
 - *“Which release performed best?”*
 - *“What type of work overruns most?”*""")
     with c_intro2:
         st.success("""**📐 Estimate a new work item**
+
 Open **“Describe a work item”** below to set the details, then ask:
 - *“How long will this take?”*
 - *“Will it cause spillover mid-sprint?”*""")
