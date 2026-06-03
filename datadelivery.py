@@ -43,6 +43,38 @@ def load_models():
 df, tasks, release = load_data()
 xgb_m, knn_m, ql_m, qm_m, qh_m, shap_exp, train_df, FEATS = load_models()
 
+# ── Release-level overrun summary (used by both the dashboard and the Copilot) ──
+@st.cache_data(ttl=0)
+def build_release_facts(_release, _df):
+    rel = _release.copy()
+    rel["Overrun_Pct"] = (
+        (rel["Total_Actual_Hrs"] - rel["Total_Orig_Est_Hrs"])
+        / rel["Total_Orig_Est_Hrs"] * 100
+    ).round(1)
+    lines = []
+    for _, r in rel.iterrows():
+        rid = r["Release_ID"]
+        status = "UNDER budget" if r["Overrun_Pct"] < 0 else "OVER budget"
+        # work-type breakdown for this release
+        sub = _df[_df["Release_ID"] == rid]
+        if len(sub):
+            by_type = (sub.groupby("Item_Type")["Overrun_Pct_clean"].mean()
+                       .sort_values(ascending=False))
+            worst = by_type.index[0] if len(by_type) else "n/a"
+            worst_pct = by_type.iloc[0] if len(by_type) else 0.0
+            type_txt = (f" Worst work type: {worst} (avg {worst_pct:+.0f}% overrun). "
+                        f"Stories: {len(sub)}.")
+        else:
+            type_txt = ""
+        lines.append(
+            f"  {rid}: estimated {r['Total_Orig_Est_Hrs']:.0f} hrs, "
+            f"actual {r['Total_Actual_Hrs']:.0f} hrs, "
+            f"{r['Overrun_Pct']:+.1f}% ({status})." + type_txt
+        )
+    return rel, "\n".join(lines)
+
+release_overrun_facts, RELEASE_FACTS_TXT = build_release_facts(release, df)
+
 st.sidebar.image(
     "https://upload.wikimedia.org/wikipedia/commons/thumb/4/45/Fiserv_logo.svg/320px-Fiserv_logo.svg.png",
     width=180
@@ -281,10 +313,10 @@ if page == "📊 Dashboard":
         )
         st.dataframe(summary_display, use_container_width=True, hide_index=True)
 
-        # FIX — tooltip rewritten to make sense without implying the sidebar filter carries over to the Copilot page
-        st.info("""💡 **How to use this tab:** Identify a release with a high overrun % in the chart above.
-Use the Release filter on the left to drill into that release's individual stories across the other tabs (Overrun Analysis, Effort Patterns, Raw Data).
-To ask the AI why a release overran, navigate to the 🤖 Copilot Assistant page and describe the release details there.""")
+        # FIX — tooltip rewritten: Copilot answers release questions directly, no form to fill
+        st.info("""💡 **How to use this tab:** Spot a release with a high overrun % in the chart above.
+Use the **Release filter** on the left to drill into that release's individual stories across the other tabs (Overrun Analysis, Effort Patterns, Raw Data).
+Want the AI to explain it? Open the **🤖 Copilot Assistant** page and simply type your question — for example *"Why did REL-X6 overrun?"* You do **not** need to fill in any form first; the Copilot already knows every release's figures.""")
 
     with tab3:
         st.markdown("### How long does work actually take?")
@@ -413,19 +445,12 @@ To ask the AI why a release overran, navigate to the 🤖 Copilot Assistant page
 
         with col_s2:
             st.markdown("#### Current Sprint State")
-            is_mid_sprint     = st.checkbox("⚡ This is a MID-SPRINT change request", value=True)
-            pct_complete      = st.slider("Sprint % complete", 0, 100, 50,
-                                          disabled=not is_mid_sprint,
-                                          help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%.")
-            already_committed = st.number_input(
-                "Hours already committed / in-progress",
-                min_value=0.0, max_value=5000.0,
-                value=0.0, step=10.0,
-                help="For reference only — shows how much work is already assigned this sprint. Does NOT affect the remaining capacity calculation."
-            )
+            is_mid_sprint = st.checkbox("⚡ This is a MID-SPRINT change request", value=True)
+            pct_complete  = st.slider("Sprint % complete", 0, 100, 50,
+                                      disabled=not is_mid_sprint,
+                                      help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%.")
 
-            # Remaining capacity uses sprint % complete only (Justin Approach 1).
-            # Committed hours are NOT deducted — they are reference only.
+            # Remaining capacity = Total capacity × (1 − sprint % complete).
             if is_mid_sprint:
                 remaining_capacity = total_capacity * (1 - pct_complete / 100)
             else:
@@ -447,10 +472,8 @@ To ask the AI why a release overran, navigate to the 🤖 Copilot Assistant page
                                             step=1.0, key="cr_oe")
         with cr_col2:
             cr_item_type = st.selectbox("Item Type", ["Feature", "Enhancement", "Defect"], key="cr_it")
-            # FIX — "Platform" label changed to "Channel or Domain" per Justin's feedback
             cr_platform  = st.selectbox("Channel or Domain", ["iOS", "Android", "Platform"], key="cr_pl")
         with cr_col3:
-            # FIX — "Feature Size" label changed to "Change Size" per Justin's feedback
             cr_feat_size = st.selectbox("Change Size", ["S", "M", "L"], key="cr_fs")
             cr_has_qa    = st.selectbox("Has QA?", ["Yes", "No"], key="cr_qa")
 
@@ -541,10 +564,8 @@ To ask the AI why a release overran, navigate to the 🤖 Copilot Assistant page
                              yaxis_title="Hours", xaxis_title="")
         st.plotly_chart(fig_sp, use_container_width=True)
 
-        # FIX — written scenario narrative explaining exactly how the verdict was reached
         st.divider()
         st.markdown("#### 📋 How Was This Verdict Reached?")
-
         narrative_remaining = f"remaining capacity = {total_capacity:.0f} × (1 − {pct_complete}%) = **{remaining_capacity:.0f} hrs**"
         narrative_xgb       = f"XGBoost predicts this change request will take **{cr_xgb:.0f} hrs**"
         narrative_headroom  = f"Headroom = {remaining_capacity:.0f} − {cr_xgb:.0f} = **{headroom:+.0f} hrs**"
@@ -558,7 +579,6 @@ To ask the AI why a release overran, navigate to the 🤖 Copilot Assistant page
 
         **Step 2 — Remaining Capacity**
         The sprint is **{pct_complete}% complete**, so the {narrative_remaining}.
-        (The "hours already committed" field is shown for reference only and does not affect this calculation.)
 
         **Step 3 — Effort Prediction**
         For a **{cr_item_type}** with **{cr_story_pts} story points** and an original estimate of **{cr_orig_est:.0f} hrs**,
@@ -621,128 +641,115 @@ To ask the AI why a release overran, navigate to the 🤖 Copilot Assistant page
         - 🔴 **High Risk** — predicted hours exceed remaining capacity across all scenarios
         """)
 
-
 # ═════════════════════════════════════════════════════════════
-# PAGE 2 — COPILOT ASSISTANT
+# PAGE 2 — COPILOT ASSISTANT  (redesigned: chat-first, form optional)
 # ═════════════════════════════════════════════════════════════
 elif page == "🤖 Copilot Assistant":
 
     st.title("🤖 Copilot Assistant")
+
+    # Clear intro explaining the TWO things you can do here
     st.markdown("""
-    > **How to use:** Fill in the work item details below, then type any question in the chat box.
-    > The AI uses historical patterns from all past releases to estimate effort for any work item —
-    > including new releases and new enhancements not yet in the dataset.
+    Ask me anything about Fiserv delivery — **just type a question below to start.**
     """)
-    st.divider()
-
-    st.subheader("Step 1 — Describe the work item")
-    col_a, col_b, col_c = st.columns(3)
-
-    with col_a:
-        existing_releases = sorted(df["Release_ID"].unique().tolist())
-        release_options   = existing_releases + ["Future Release"]
-        release_sel       = st.selectbox("Release", release_options,
-                            help="Select an existing release or Future Release for upcoming ones.")
-        item_type         = st.selectbox("Item Type", ["Feature", "Enhancement", "Defect"],
-                            help="Feature = new functionality. Enhancement = improvement. Defect = bug fix.")
-        # FIX — label updated to "Channel or Domain"
-        platform          = st.selectbox("Channel or Domain", ["iOS", "Android", "Platform"],
-                            help="iOS / Android = mobile channels. Platform = backend/API work.")
-
-    with col_b:
-        story_points = st.slider("Story Points", 1, 21, 5,
-                        help="Team's complexity score. Higher = more complex = more hours.")
-        original_est = st.number_input("Original Estimate (hrs)",
-                        min_value=1.0, max_value=300.0, value=40.0, step=1.0,
-                        help="How many hours the team originally estimated for this work item.")
-
-    with col_c:
-        team_size    = st.slider("Team Size", 1, 10, 5, key="cop_team_size",
-                        help="Number of people on the team.")
-        # FIX — label updated to "Change Size"
-        feature_size = st.selectbox("Change Size", ["S", "M", "L"],
-                        help="S = Small, M = Medium, L = Large.")
-        has_qa       = st.selectbox("Has QA Task?", ["Yes", "No"],
-                        help="Does this story require quality assurance testing?")
+    c_intro1, c_intro2 = st.columns(2)
+    with c_intro1:
+        st.info("""**💬 Ask about releases & past data**
+No setup needed. Try:
+- *“Why did REL-X6 overrun?”*
+- *“Which release performed best?”*
+- *“What type of work overruns most?”*""")
+    with c_intro2:
+        st.success("""**📐 Estimate a new work item**
+Open **“Describe a work item”** below to set the details, then ask:
+- *“How long will this take?”*
+- *“Will it cause spillover mid-sprint?”*""")
 
     st.divider()
-    st.subheader("Step 1b — Mid-Sprint Context (optional)")
-    st.markdown("*Fill this in if the customer is requesting a change while a sprint is already in progress.*")
 
-    mid_col1, mid_col2, mid_col3 = st.columns(3)
-    with mid_col1:
-        mid_sprint_cr = st.checkbox("⚡ This is a mid-sprint change request", value=False)
-        mid_pct       = st.slider(
-            "Sprint % complete", 0, 100, 50,
-            disabled=not mid_sprint_cr, key="cop_mid",
-            help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%."
-        )
-    with mid_col2:
-        mid_committed = st.number_input(
-            "Hours already committed this sprint",
-            min_value=0.0, value=0.0, step=5.0,
-            disabled=not mid_sprint_cr, key="cop_comm",
-            help="For reference only — shows how much work is already assigned this sprint. Does NOT affect the remaining capacity calculation."
-        )
-    with mid_col3:
-        default_cap = float(team_size * 7 * 14)
-        mid_capacity = st.number_input(
-            "Total sprint capacity (hrs)",
-            min_value=10.0, value=default_cap, step=10.0,
-            disabled=not mid_sprint_cr, key="cop_cap",
-            help="Team Size x hrs/day x sprint days. Auto-filled as 7 hrs/day x 14 days."
-        )
+    # ── OPTIONAL work-item form, collapsed by default so the page leads with chat ──
+    with st.expander("📐 Describe a work item  (optional — only needed for effort estimates)", expanded=False):
+        st.caption("Set these details to get a model-based estimate for a *specific* new work item. "
+                   "For questions about past releases you can skip this entirely.")
 
-    sprint_num = release_sprint.get(release_sel, 55)
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            existing_releases = sorted(df["Release_ID"].unique().tolist())
+            release_options   = existing_releases + ["Future Release"]
+            release_sel       = st.selectbox("Release", release_options,
+                                help="Select an existing release or Future Release for upcoming ones.")
+            item_type         = st.selectbox("Item Type", ["Feature", "Enhancement", "Defect"],
+                                help="Feature = new functionality. Enhancement = improvement. Defect = bug fix.")
+            platform          = st.selectbox("Channel or Domain", ["iOS", "Android", "Platform"],
+                                help="iOS / Android = mobile channels. Platform = backend/API work.")
+        with col_b:
+            story_points = st.slider("Story Points", 1, 21, 5,
+                            help="Team's complexity score. Higher = more complex = more hours.")
+            original_est = st.number_input("Original Estimate (hrs)",
+                            min_value=1.0, max_value=300.0, value=40.0, step=1.0,
+                            help="How many hours the team originally estimated for this work item.")
+        with col_c:
+            team_size    = st.slider("Team Size", 1, 10, 5, key="cop_team_size",
+                            help="Number of people on the team.")
+            feature_size = st.selectbox("Change Size", ["S", "M", "L"],
+                            help="S = Small, M = Medium, L = Large.")
+            has_qa       = st.selectbox("Has QA Task?", ["Yes", "No"],
+                            help="Does this story require quality assurance testing?")
 
-    input_data = {
-        "Story_Points":     story_points,
-        "Original_Est_Hrs": original_est,
-        "Bug_Rework_Hrs":   0.0,
-        "N_Tasks":          4,
-        "Item_Type_enc":    type_enc[item_type],
-        "Feature_Size_enc": size_enc[feature_size],
-        "Platform_enc":     plat_enc[platform],
-        "Has_QA_enc":       1 if has_qa == "Yes" else 0,
-        "Team_Type_enc":    1,
-        "Team_Size":        team_size,
-        "Sprint_Number":    sprint_num,
-    }
+        st.markdown("###### Mid-Sprint Context (optional)")
+        st.caption("Fill this in if the customer is requesting a change while a sprint is already in progress.")
+        mid_col1, mid_col2 = st.columns(2)
+        with mid_col1:
+            mid_sprint_cr = st.checkbox("⚡ This is a mid-sprint change request", value=False)
+            mid_pct       = st.slider("Sprint % complete", 0, 100, 50,
+                            disabled=not mid_sprint_cr, key="cop_mid",
+                            help="Each working day = 10% of a 10-day sprint. e.g. 3 days in = 30%.")
+        with mid_col2:
+            default_cap  = float(team_size * 7 * 14)
+            mid_capacity = st.number_input("Total sprint capacity (hrs)",
+                            min_value=10.0, value=default_cap, step=10.0,
+                            disabled=not mid_sprint_cr, key="cop_cap",
+                            help="Team Size × hrs/day × sprint days. Auto-filled as 7 hrs/day × 14 days.")
 
-    X_input = pd.DataFrame([input_data])[FEATS]
+        # live predictions for the described item
+        sprint_num = release_sprint.get(release_sel, 55)
+        input_data = {
+            "Story_Points":     story_points,
+            "Original_Est_Hrs": original_est,
+            "Bug_Rework_Hrs":   0.0,
+            "N_Tasks":          4,
+            "Item_Type_enc":    type_enc[item_type],
+            "Feature_Size_enc": size_enc[feature_size],
+            "Platform_enc":     plat_enc[platform],
+            "Has_QA_enc":       1 if has_qa == "Yes" else 0,
+            "Team_Type_enc":    1,
+            "Team_Size":        team_size,
+            "Sprint_Number":    sprint_num,
+        }
+        X_input = pd.DataFrame([input_data])[FEATS]
+        xgb_pred  = float(xgb_m.predict(X_input)[0])
+        low_pred  = float(ql_m.predict(X_input)[0])
+        mid_pred  = float(qm_m.predict(X_input)[0])
+        high_pred = float(qh_m.predict(X_input)[0])
 
-    xgb_pred  = xgb_m.predict(X_input)[0]
-    low_pred  = ql_m.predict(X_input)[0]
-    mid_pred  = qm_m.predict(X_input)[0]
-    high_pred = qh_m.predict(X_input)[0]
+        if mid_sprint_cr:
+            mid_remaining = mid_capacity * (1 - mid_pct / 100)
+            mid_fits      = mid_remaining >= xgb_pred
+            mid_headroom  = mid_remaining - xgb_pred
+            verdict_label = "✅ FITS in remaining capacity" if mid_fits else "🚨 SPILLOVER RISK"
+            st.metric("Remaining Sprint Capacity", f"{mid_remaining:.0f} hrs",
+                      delta=f"{verdict_label}  |  Headroom: {mid_headroom:+.0f} hrs",
+                      delta_color="normal" if mid_fits else "inverse")
 
-    if mid_sprint_cr:
-        # Remaining capacity uses sprint % complete only (Justin Approach 1).
-        # Committed hours are NOT deducted — reference only.
-        mid_remaining = mid_capacity * (1 - mid_pct / 100)
-        mid_fits      = mid_remaining >= xgb_pred
-        mid_headroom  = mid_remaining - xgb_pred
-        verdict_label = "✅ FITS in remaining capacity" if mid_fits else "🚨 SPILLOVER RISK"
-        st.metric(
-            "Remaining Sprint Capacity",
-            f"{mid_remaining:.0f} hrs",
-            delta=f"{verdict_label}  |  Headroom: {mid_headroom:+.0f} hrs",
-            delta_color="normal" if mid_fits else "inverse"
-        )
+        st.markdown("**Instant prediction for this work item:**")
+        p1, p2, p3, p4 = st.columns(4)
+        p1.metric("Low",     f"{low_pred:.0f} hrs")
+        p2.metric("Central", f"{mid_pred:.0f} hrs")
+        p3.metric("High",    f"{high_pred:.0f} hrs")
+        p4.metric("XGBoost", f"{xgb_pred:.1f} hrs")
+        st.caption("These numbers are passed to the Copilot, so you can ask follow-up questions about this item below.")
 
-    st.divider()
-    st.subheader("Step 2 — See the instant prediction")
-    st.markdown("*Updates automatically as you change the work item details above.*")
-    p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Low Estimate",     f"{low_pred:.0f} hrs",  help="Optimistic scenario")
-    p2.metric("Central Estimate", f"{mid_pred:.0f} hrs",  help="Most likely outcome")
-    p3.metric("High Estimate",    f"{high_pred:.0f} hrs", help="Budget for this to be safe")
-    p4.metric("XGBoost Best",     f"{xgb_pred:.1f} hrs",  help="Best single estimate from the model")
-
-    st.divider()
-    st.subheader("Step 3 — Ask the Copilot Assistant")
-    st.markdown("*Ask any planning question. The assistant uses historical data from all past releases to answer.*")
-
+    # ── Build the SHAP drivers + nearest-neighbour analogies for the described item ──
     import shap as shap_lib
     sv    = shap_exp(X_input).values[0]
     pairs = sorted(zip(FEATS, sv), key=lambda x: abs(x[1]), reverse=True)
@@ -770,40 +777,46 @@ elif page == "🤖 Copilot Assistant":
         mid_remaining = mid_capacity * (1 - mid_pct / 100)
         fits          = mid_remaining >= xgb_pred
         mid_sprint_context = f"""
-MID-SPRINT CONTEXT:
+MID-SPRINT CONTEXT (for the described work item):
   Sprint is {mid_pct}% complete.
   Total sprint capacity: {mid_capacity:.0f} hrs
   Remaining capacity: {mid_remaining:.0f} hrs (= {mid_capacity:.0f} × (1 − {mid_pct}%))
-  (Hours already committed: {mid_committed:.0f} hrs — reference only, not deducted)
   XGBoost predicts this item needs: {xgb_pred:.1f} hrs
   Verdict: {"FITS within remaining capacity." if fits else "SPILLOVER RISK — predicted hours exceed remaining capacity."}
   Headroom: {mid_remaining - xgb_pred:+.0f} hrs
 """
 
+    # ── System prompt now ALSO includes release-level facts so the Copilot can
+    #    answer "why did REL-X6 overrun?" with no form filled in. ──
     system_prompt = f"""You are a helpful AI planning assistant for Fiserv project managers.
-You help estimate effort for software work items using machine learning predictions
-grounded in historical delivery data from Fiserv's past releases (REL-X2 through REL-X9).
+You answer two kinds of questions:
+  (1) Questions about PAST RELEASES and historical delivery data — answer these directly from the RELEASE DATA below. No work-item form is needed.
+  (2) Effort ESTIMATES for a specific new work item — use the WORK ITEM and MODEL PREDICTIONS below.
 
-IMPORTANT: The model learned PATTERNS that apply to ANY release including new ones.
-When asked about new releases or future sprints, confidently use these cross-release patterns.
+Figure out which kind of question the user is asking and answer accordingly. If they ask about a release (e.g. "why did REL-X6 overrun?"), use the RELEASE DATA — do not ask them to fill in a form.
 
-WORK ITEM:
+RELEASE DATA (all completed releases, REL-X2 through REL-X9):
+{RELEASE_FACTS_TXT}
+
+Overall: across {len(df)} completed stories, about {(df['Overrun_Pct_clean']>0).mean()*100:.0f}% overran their original estimate. Defects overrun the most; features are the most predictable.
+
+WORK ITEM (only relevant for estimate questions; defaults if the user hasn't set the form):
   Release: {release_sel}
   Type: {item_type} | Channel or Domain: {platform}
   Story Points: {story_points} | Original Estimate: {original_est} hrs
   Team Size: {team_size} | Change Size: {feature_size} | Has QA: {has_qa}
 
-MODEL PREDICTIONS (trained on historical stories):
+MODEL PREDICTIONS for that work item:
   Low: {low_pred:.0f} hrs | Central: {mid_pred:.0f} hrs | High: {high_pred:.0f} hrs
   XGBoost best: {xgb_pred:.1f} hrs
 
-KEY DRIVERS:
-{driver_txt}
+KEY DRIVERS (SHAP, for that work item):{driver_txt}
 
-3 MOST SIMILAR PAST STORIES:
-{analogy_txt}
+3 MOST SIMILAR PAST STORIES (for that work item):{analogy_txt}
 {mid_sprint_context}
-Answer clearly and conversationally. Reference specific numbers. Under 150 words."""
+Answer clearly and conversationally. Reference specific numbers. Keep it under 150 words."""
+
+    st.subheader("💬 Ask the Copilot")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -812,26 +825,49 @@ Answer clearly and conversationally. Reference specific numbers. Under 150 words
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if prompt_input := st.chat_input("e.g. Should we take this on mid-sprint? Will it cause spillover?"):
-
+    if prompt_input := st.chat_input("e.g. Why did REL-X6 overrun?  ·  How long will this work item take?"):
         st.session_state.messages.append({"role": "user", "content": prompt_input})
         with st.chat_message("user"):
             st.markdown(prompt_input)
 
+        # resolve the API key from secrets or env
+        api_key = None
         try:
-            from groq import Groq
-            client = Groq(api_key=st.secrets.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY"))
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": prompt_input}
-                ],
-                max_tokens=300
-            )
-            reply = response.choices[0].message.content
-        except Exception as e:
-            reply = f"Error connecting to AI: {str(e)}"
+            api_key = st.secrets.get("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")
+        except Exception:
+            api_key = None
+        if not api_key:
+            api_key = os.environ.get("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")
+
+        if not api_key:
+            reply = ("⚠️ The AI assistant isn't configured yet. No GROQ_API_KEY was found. "
+                     "Add a valid key under the app's Settings → Secrets (Streamlit Cloud) "
+                     "or as an environment variable, then ask again.")
+        else:
+            try:
+                from groq import Groq
+                client = Groq(api_key=api_key)
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": prompt_input}
+                    ],
+                    max_tokens=300
+                )
+                reply = response.choices[0].message.content
+            except Exception as e:
+                msg = str(e)
+                if "invalid_api_key" in msg or "401" in msg:
+                    reply = ("⚠️ The Groq API key was rejected (invalid or expired). "
+                             "Generate a new key at console.groq.com/keys and update it in "
+                             "Settings → Secrets as GROQ_API_KEY, then try again.")
+                elif "model" in msg.lower() and ("decommission" in msg.lower() or "not found" in msg.lower()):
+                    reply = ("⚠️ The configured AI model is unavailable. The model name may have "
+                             "changed on Groq's side — check console.groq.com/docs/models for the "
+                             "current model string.")
+                else:
+                    reply = f"Error connecting to AI: {msg}"
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
         with st.chat_message("assistant"):
