@@ -834,12 +834,14 @@ Answer clearly and conversationally. Reference specific numbers. Keep it under 1
 
         # resolve the API key from secrets or env
         api_key = None
+
         try:
-            api_key = st.secrets.get("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")
+            api_key = st.secrets.get("GROQ_API_KEY")
         except Exception:
-            api_key = None
+            pass
+
         if not api_key:
-            api_key = os.environ.get("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")
+            api_key = os.environ.get("GROQ_API_KEY")
 
         if not api_key:
             reply = ("⚠️ The AI assistant isn't configured yet. No GROQ_API_KEY was found. "
