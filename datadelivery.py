@@ -494,9 +494,11 @@ Want the AI to explain it? Open the **🤖 Copilot Assistant** page and simply t
         }])[FEATS]
 
         cr_xgb  = float(xgb_m.predict(cr_input)[0])
-        cr_low  = float(ql_m.predict(cr_input)[0])
-        cr_mid  = float(qm_m.predict(cr_input)[0])
-        cr_high = float(qh_m.predict(cr_input)[0])
+        # Sort the three quantile outputs so Low <= Central <= High always holds
+        _crq = sorted([float(ql_m.predict(cr_input)[0]),
+                       float(qm_m.predict(cr_input)[0]),
+                       float(qh_m.predict(cr_input)[0])])
+        cr_low, cr_mid, cr_high = _crq[0], _crq[1], _crq[2]
 
         st.divider()
         st.markdown("#### Model Predictions for This Change Request")
@@ -730,9 +732,11 @@ Open **“Describe a work item”** below to set the details, then ask:
         }
         X_input = pd.DataFrame([input_data])[FEATS]
         xgb_pred  = float(xgb_m.predict(X_input)[0])
-        low_pred  = float(ql_m.predict(X_input)[0])
-        mid_pred  = float(qm_m.predict(X_input)[0])
-        high_pred = float(qh_m.predict(X_input)[0])
+        # Sort the three quantile outputs so Low <= Central <= High always holds
+        _q = sorted([float(ql_m.predict(X_input)[0]),
+                     float(qm_m.predict(X_input)[0]),
+                     float(qh_m.predict(X_input)[0])])
+        low_pred, mid_pred, high_pred = _q[0], _q[1], _q[2]
 
         if mid_sprint_cr:
             mid_remaining = mid_capacity * (1 - mid_pct / 100)
@@ -758,9 +762,9 @@ Open **“Describe a work item”** below to set the details, then ask:
     top3  = pairs[:3]
     driver_txt = ""
     for feat, val in top3:
-        direction = "increases" if val > 0 else "decreases"
+        direction = "above" if val > 0 else "below"
         driver_txt += (f"\n  - {feat.replace('_enc','').replace('_',' ')}: "
-                       f"{direction} estimate by {abs(val):.1f} hrs")
+                       f"pushes this estimate {abs(val):.1f} hrs {direction} the average story")
 
     dists, idxs = knn_m.kneighbors(X_input, n_neighbors=3)
     analogy_txt = ""
@@ -808,15 +812,20 @@ WORK ITEM (only relevant for estimate questions; defaults if the user hasn't set
   Story Points: {story_points} | Original Estimate: {original_est} hrs
   Team Size: {team_size} | Change Size: {feature_size} | Has QA: {has_qa}
 
-MODEL PREDICTIONS for that work item:
-  Low: {low_pred:.0f} hrs | Central: {mid_pred:.0f} hrs | High: {high_pred:.0f} hrs
-  XGBoost best: {xgb_pred:.1f} hrs
+MODEL PREDICTIONS for that work item (THIS is the answer to "how long will it take"):
+  Most likely (central) estimate: {mid_pred:.0f} hrs
+  Likely range: {low_pred:.0f} hrs (optimistic) to {high_pred:.0f} hrs (conservative)
+  XGBoost single-point estimate: {xgb_pred:.0f} hrs
 
-KEY DRIVERS (SHAP, for that work item):{driver_txt}
+KEY DRIVERS — these explain why this estimate differs from a typical story.
+They are RELATIVE effects versus the average story, NOT the estimate itself. Do not use them to calculate a new total:{driver_txt}
 
 3 MOST SIMILAR PAST STORIES (for that work item):{analogy_txt}
 {mid_sprint_context}
-Answer clearly and conversationally. Reference specific numbers. Keep it under 150 words."""
+ANSWERING RULES:
+- For "how long will this take", lead with the central estimate of {mid_pred:.0f} hrs and give the {low_pred:.0f}-{high_pred:.0f} hrs range. You may mention the XGBoost figure as a cross-check.
+- NEVER invent a number outside the {low_pred:.0f}-{high_pred:.0f} hrs range. NEVER say a driver "decreases the estimate to" some total — drivers are relative only.
+- Be clear and conversational, reference the specific numbers above, keep it under 150 words."""
 
     st.subheader("💬 Ask the Copilot")
 
