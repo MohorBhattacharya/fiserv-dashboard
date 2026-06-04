@@ -506,7 +506,7 @@ Want the AI to explain it? Open the **🤖 Copilot Assistant** page and simply t
         m1.metric("Low Estimate",      f"{cr_low:.0f} hrs",  help="Optimistic scenario")
         m2.metric("Central Estimate",  f"{cr_mid:.0f} hrs",  help="Most likely")
         m3.metric("High Estimate",     f"{cr_high:.0f} hrs", help="Worst case")
-        m4.metric("XGBoost Predicted", f"{cr_xgb:.0f} hrs",  help="Best single estimate")
+        m4.metric("Primary Model",     f"{cr_xgb:.0f} hrs",  help="Best single estimate (Random Forest)")
 
         st.divider()
         st.markdown("#### 🔎 Spillover Verdict")
@@ -540,7 +540,7 @@ Want the AI to explain it? Open the **🤖 Copilot Assistant** page and simply t
 
         v1, v2, v3, v4 = st.columns(4)
         v1.metric("Remaining Capacity",  f"{remaining_capacity:.0f} hrs")
-        v2.metric("Predicted (XGBoost)", f"{cr_xgb:.0f} hrs")
+        v2.metric("Predicted (Primary Model)", f"{cr_xgb:.0f} hrs")
         v3.metric("Headroom (Central)",  f"{headroom:+.0f} hrs",
                   delta_color="normal" if headroom >= 0 else "inverse")
         v4.metric("Worst-Case Headroom", f"{headroom_hi:+.0f} hrs",
@@ -619,7 +619,7 @@ Want the AI to explain it? Open the **🤖 Copilot Assistant** page and simply t
             st.dataframe(capacity_data, use_container_width=True, hide_index=True)
 
         with col_d2:
-            st.markdown("##### Component 2 — Predicted Effort (XGBoost)")
+            st.markdown("##### Component 2 — Predicted Effort (Primary Model)")
             st.markdown("*These inputs feed the ML model. Story Points and Original Estimate are the strongest signals:*")
             effort_data = pd.DataFrame({
                 "Input": ["Story Points", "Original Estimate (hrs)", "Item Type", "Change Size", "Has QA", "Channel or Domain"],
@@ -636,7 +636,7 @@ Want the AI to explain it? Open the **🤖 Copilot Assistant** page and simply t
             st.dataframe(effort_data, use_container_width=True, hide_index=True)
 
         st.markdown("""
-        **Verdict logic:** The system compares remaining capacity against the XGBoost prediction.
+        **Verdict logic:** The system compares remaining capacity against the Primary Model prediction.
         - 🟢 **Low Risk** — all three estimates (low, central, high) fit within remaining capacity
         - 🟡 **Medium Risk** — central fits but high scenario is tight
         - 🟠 **Medium-High** — central fits but worst case causes spillover
@@ -752,7 +752,7 @@ Open **“Describe a work item”** below to set the details, then ask:
         p1.metric("Low",     f"{low_pred:.0f} hrs")
         p2.metric("Central", f"{mid_pred:.0f} hrs")
         p3.metric("High",    f"{high_pred:.0f} hrs")
-        p4.metric("XGBoost", f"{xgb_pred:.1f} hrs")
+        p4.metric("Primary Model", f"{xgb_pred:.1f} hrs")
         st.caption("These numbers are passed to the Copilot, so you can ask follow-up questions about this item below.")
 
     # ── Build the SHAP drivers + nearest-neighbour analogies for the described item ──
@@ -787,7 +787,7 @@ MID-SPRINT CONTEXT (for the described work item):
   Sprint is {mid_pct}% complete.
   Total sprint capacity: {mid_capacity:.0f} hrs
   Remaining capacity: {mid_remaining:.0f} hrs (= {mid_capacity:.0f} × (1 − {mid_pct}%))
-  XGBoost predicts this item needs: {xgb_pred:.1f} hrs
+  Primary model predicts this item needs: {xgb_pred:.1f} hrs
   Verdict: {"FITS within remaining capacity." if fits else "SPILLOVER RISK — predicted hours exceed remaining capacity."}
   Headroom: {mid_remaining - xgb_pred:+.0f} hrs
 """
@@ -815,7 +815,7 @@ WORK ITEM (only relevant for estimate questions; defaults if the user hasn't set
 MODEL PREDICTIONS for that work item (THIS is the answer to "how long will it take"):
   Most likely (central) estimate: {mid_pred:.0f} hrs
   Likely range: {low_pred:.0f} hrs (optimistic) to {high_pred:.0f} hrs (conservative)
-  XGBoost single-point estimate: {xgb_pred:.0f} hrs
+  Primary Model (Random Forest): {xgb_pred:.1f} hrs
 
 KEY DRIVERS — these explain why this estimate differs from a typical story.
 They are RELATIVE effects versus the average story, NOT the estimate itself. Do not use them to calculate a new total:{driver_txt}
