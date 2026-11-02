@@ -1,11 +1,9 @@
 streamlit
 pandas
-plotly
-openpyxl
-numpy
-xgboost
-scikit-learn
-shap
-groq
+scikit-learn==1.4.2
+xgboost==2.0.3
+shap==0.44.1
 joblib
-statsmodels
+numpy<2
+plotly
+groq
